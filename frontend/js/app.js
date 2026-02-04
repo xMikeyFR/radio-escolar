@@ -55,6 +55,64 @@ document.addEventListener('DOMContentLoaded', () => {
     // Inicializar elementos del DOM
     initializeElements();
     
+    // Configurar eventos de login
+    if (elements.loginForm) {
+        elements.loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    state.isAdmin = true;
+                    localStorage.setItem('radioAdminSession', 'true');
+                    hideLogin();
+                    showAdminControls();
+                    // Autenticar también en Socket.io
+                    if (state.socket && state.socket.connected) {
+                        state.socket.emit('admin-auth', { username, password });
+                    }
+                    if (elements.loginError) {
+                        elements.loginError.classList.add('hidden');
+                    }
+                } else {
+                    showLoginError('Credenciales incorrectas');
+                }
+            } catch (error) {
+                showLoginError('Error al conectar con el servidor');
+            }
+        });
+    }
+
+    if (elements.guestBtn) {
+        elements.guestBtn.addEventListener('click', () => {
+            state.isAdmin = false;
+            localStorage.removeItem('radioAdminSession');
+            hideLogin();
+            showAdminControls();
+        });
+    }
+
+    if (elements.logoutBtn) {
+        elements.logoutBtn.addEventListener('click', () => {
+            state.isAdmin = false;
+            localStorage.removeItem('radioAdminSession');
+            if (state.socket && state.socket.connected) {
+                stopRecording();
+            }
+            showLogin();
+            showAdminControls();
+        });
+    }
+    
     // Verificar si hay sesión guardada
     const savedSession = localStorage.getItem('radioAdminSession');
     if (savedSession === 'true') {
@@ -106,69 +164,6 @@ async function checkSavedSession() {
         showLogin();
     }
 }
-
-// Configurar eventos de login DESPUÉS de inicializar elementos
-document.addEventListener('DOMContentLoaded', () => {
-    // Esperar un momento para que initializeElements() se ejecute primero
-    setTimeout(() => {
-        if (elements.loginForm) {
-            elements.loginForm.addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const username = document.getElementById('username').value;
-                const password = document.getElementById('password').value;
-
-                try {
-                    const response = await fetch(`${API_BASE_URL}/api/login`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ username, password })
-                    });
-
-                    const data = await response.json();
-
-                    if (data.success) {
-                        state.isAdmin = true;
-                        localStorage.setItem('radioAdminSession', 'true');
-                        hideLogin();
-                        showAdminControls();
-                        // Autenticar también en Socket.io
-                        if (state.socket && state.socket.connected) {
-                            state.socket.emit('admin-auth', { username, password });
-                        }
-                        if (elements.loginError) {
-                            elements.loginError.classList.add('hidden');
-                        }
-                    } else {
-                        showLoginError('Credenciales incorrectas');
-                    }
-                } catch (error) {
-                    showLoginError('Error al conectar con el servidor');
-                }
-            });
-        }
-
-        if (elements.guestBtn) {
-            elements.guestBtn.addEventListener('click', () => {
-                state.isAdmin = false;
-                localStorage.removeItem('radioAdminSession');
-                hideLogin();
-                showAdminControls();
-            });
-        }
-
-        if (elements.logoutBtn) {
-            elements.logoutBtn.addEventListener('click', () => {
-                state.isAdmin = false;
-                localStorage.removeItem('radioAdminSession');
-                if (state.socket && state.socket.connected) {
-                    stopRecording();
-                }
-                showLogin();
-                showAdminControls();
-            });
-        }
-    }, 100);
-});
 
 function showLoginError(message) {
     if (elements.loginError) {
