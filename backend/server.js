@@ -205,6 +205,24 @@ io.on('connection', (socket) => {
         currentSongIndex = (currentSongIndex + 1) % playlist.length;
         io.emit('song-changed', playlist[currentSongIndex]);
     });
+
+    // ===================================
+    // TRANSMISIÓN DE VOZ (MICROFONO)
+    // ===================================
+    socket.on('voice-start', () => {
+        // Avizar a todos que va a hablar alguien (para bajar volumen de música)
+        socket.broadcast.emit('voice-start');
+    });
+
+    socket.on('voice-data', (data) => {
+        // Retransmitir el audio a todos los demás
+        socket.broadcast.emit('voice-data', data);
+    });
+
+    socket.on('voice-end', () => {
+        // Avisar que terminó de hablar
+        socket.broadcast.emit('voice-end');
+    });
 });
 
 // =============================================

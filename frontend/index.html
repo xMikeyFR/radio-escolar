@@ -60,13 +60,19 @@
             <!-- Visualizador de Ondas -->
             <canvas id="visualizer" height="60"></canvas>
 
-            <!-- Control de volumen -->
-            <div class="volume-container">
-                <button id="muteBtn" class="volume-btn" title="Silenciar">
-                    <i class="fas fa-volume-high"></i>
+            <!-- Control de volumen y micrófono -->
+            <div class="controls-wrapper">
+                <button id="micBtn" class="mic-btn" title="Mantener para hablar">
+                    <i class="fas fa-microphone"></i>
                 </button>
-                <input type="range" id="volumeSlider" class="volume-slider" min="0" max="100" value="75">
-                <span id="volumeValue" class="volume-value">75%</span>
+
+                <div class="volume-container">
+                    <button id="muteBtn" class="volume-btn" title="Silenciar">
+                        <i class="fas fa-volume-high"></i>
+                    </button>
+                    <input type="range" id="volumeSlider" class="volume-slider" min="0" max="100" value="75">
+                    <span id="volumeValue" class="volume-value">75%</span>
+                </div>
             </div>
 
         </main>
