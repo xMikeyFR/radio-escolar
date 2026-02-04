@@ -24,8 +24,36 @@
 
 <body>
 
+    <!-- Modal de Login -->
+    <div id="loginModal" class="login-modal">
+        <div class="login-container">
+            <div class="login-header">
+                <i class="fas fa-radio"></i>
+                <h2>Radio Escolar FM</h2>
+                <p>Iniciar Sesión</p>
+            </div>
+            <form id="loginForm" class="login-form">
+                <div class="form-group">
+                    <label for="username">Usuario</label>
+                    <input type="text" id="username" name="username" required autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label for="password">Contraseña</label>
+                    <input type="password" id="password" name="password" required>
+                </div>
+                <button type="submit" class="login-btn">
+                    <i class="fas fa-sign-in-alt"></i>
+                    Entrar
+                </button>
+                <p class="login-hint">Ingresa como oyente sin credenciales</p>
+                <button type="button" id="guestBtn" class="guest-btn">Continuar como Oyente</button>
+            </form>
+            <div id="loginError" class="login-error hidden"></div>
+        </div>
+    </div>
+
     <!-- Contenedor principal -->
-    <div class="app-container">
+    <div class="app-container" id="mainContainer" style="display: none;">
 
         <!-- Header -->
         <header class="header">
@@ -33,36 +61,25 @@
                 <i class="fas fa-radio"></i>
                 <span>Radio Escolar FM</span>
             </div>
-            <div class="live-badge">
-                <span class="pulse"></span>
-                EN VIVO
+            <div class="header-right">
+                <div class="live-badge">
+                    <span class="pulse"></span>
+                    EN VIVO
+                </div>
+                <button id="logoutBtn" class="logout-btn hidden" title="Cerrar Sesión">
+                    <i class="fas fa-sign-out-alt"></i>
+                </button>
             </div>
         </header>
 
-        <!-- Reproductor Principal -->
+        <!-- Panel Principal -->
         <main class="player-container">
-
-            <!-- Carátula del álbum -->
-            <div class="album-art-container">
-                <img id="albumCover" src="https://picsum.photos/seed/radio/300/300" alt="Album Cover" class="album-art">
-                <button id="playOverlay" class="play-overlay" title="Iniciar Reproducción">
-                    <i class="fas fa-play"></i>
-                </button>
-            </div>
-
-            <!-- Info de la canción -->
-            <div class="song-info">
-                <h1 id="songTitle" class="song-title">Cargando...</h1>
-                <p id="songArtist" class="song-artist">Conectando a la radio...</p>
-                <p id="songAlbum" class="song-album"></p>
-            </div>
-
-            <!-- Visualizador de Ondas -->
+            <!-- Visualizador de Ondas (solo para admin) -->
             <canvas id="visualizer" height="60"></canvas>
 
             <!-- Control de volumen y micrófono -->
             <div class="controls-wrapper">
-                <button id="micBtn" class="mic-btn" title="Mantener para hablar">
+                <button id="micBtn" class="mic-btn hidden" title="Mantener para hablar">
                     <i class="fas fa-microphone"></i>
                 </button>
 
@@ -74,7 +91,6 @@
                     <span id="volumeValue" class="volume-value">75%</span>
                 </div>
             </div>
-
         </main>
 
         <!-- Stats en tiempo real -->
@@ -86,31 +102,6 @@
                     <span class="stat-label">Oyentes</span>
                 </div>
             </div>
-            <div class="stat-card">
-                <i class="fas fa-music"></i>
-                <div class="stat-info">
-                    <span id="totalSongs" class="stat-value">0</span>
-                    <span class="stat-label">Canciones</span>
-                </div>
-            </div>
-            <div class="stat-card">
-                <i class="fas fa-clock"></i>
-                <div class="stat-info">
-                    <span id="uptime" class="stat-value">24/7</span>
-                    <span class="stat-label">En Línea</span>
-                </div>
-            </div>
-        </section>
-
-        <!-- Playlist -->
-        <section class="playlist-section">
-            <h2 class="section-title">
-                <i class="fas fa-list"></i>
-                Playlist
-            </h2>
-            <div id="playlistContainer" class="playlist-container">
-                <!-- Las canciones se cargan dinámicamente -->
-            </div>
         </section>
 
         <!-- Footer -->
@@ -118,9 +109,6 @@
             <p>Radio Escolar FM - Proyecto de Aplicaciones Web Orientadas a Servicios</p>
         </footer>
     </div>
-
-    <!-- Audio Element -->
-    <audio id="audioPlayer" preload="auto" autoplay></audio>
 
     <!-- JavaScript -->
     <script src="js/app.js"></script>

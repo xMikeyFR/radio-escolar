@@ -37,27 +37,15 @@ app.use('/frontend', express.static(path.join(__dirname, '../frontend'))); // Pa
 app.use('/assets', express.static(path.join(__dirname, '../assets')));
 
 // =============================================
-// BASE DE DATOS SIMULADA (Playlist)
-// MÚSICA GRATIS desde URLs online
+// AUTENTICACIÓN Y PERMISOS
 // =============================================
-// =============================================
-// BASE DE DATOS SIMULADA (Playlist)
-// MÚSICA LOCAL (Tu propia música)
-// =============================================
-let playlist = [
-    {
-        id: 1,
-        title: "No Pole",
-        artist: "Don Toliver",
-        album: "Life of a DON",
-        duration: "3:07",
-        cover: "/assets/audio/no_pole_cover.jpg",
-        audioUrl: "/assets/audio/no_pole.m4a.m4a"
-    }
-];
+const ADMIN_CREDENTIALS = {
+    username: 'ADMINISTRADOR',
+    password: '987654321'
+};
 
-let currentSongIndex = 0;
-let history = [];
+// Almacenar sesiones activas (socket.id -> isAdmin)
+const adminSessions = new Map();
 let listeners = new Set();
 
 // =============================================
@@ -65,47 +53,28 @@ let listeners = new Set();
 // =============================================
 
 /**
- * SERVICIO 1: Obtener canción actual
- * GET /api/current-song
+ * SERVICIO 1: Login de administrador
+ * POST /api/login
  */
-app.get('/api/current-song', (req, res) => {
-    const currentSong = playlist[currentSongIndex];
-    res.json({
-        success: true,
-        data: {
-            ...currentSong,
-            isPlaying: true,
-            timestamp: new Date().toISOString()
-        }
-    });
+app.post('/api/login', (req, res) => {
+    const { username, password } = req.body;
+
+    if (username === ADMIN_CREDENTIALS.username && password === ADMIN_CREDENTIALS.password) {
+        res.json({
+            success: true,
+            message: 'Login exitoso',
+            isAdmin: true
+        });
+    } else {
+        res.status(401).json({
+            success: false,
+            message: 'Credenciales incorrectas'
+        });
+    }
 });
 
 /**
- * SERVICIO 2: Obtener playlist completa
- * GET /api/playlist
- */
-app.get('/api/playlist', (req, res) => {
-    res.json({
-        success: true,
-        data: playlist,
-        total: playlist.length
-    });
-});
-
-/**
- * SERVICIO 3: Obtener historial de reproducción
- * GET /api/history
- */
-app.get('/api/history', (req, res) => {
-    res.json({
-        success: true,
-        data: history.slice(-10), // Últimas 10 canciones
-        total: history.length
-    });
-});
-
-/**
- * SERVICIO 4: Obtener número de oyentes
+ * SERVICIO 2: Obtener número de oyentes
  * GET /api/listeners
  */
 app.get('/api/listeners', (req, res) => {
@@ -119,32 +88,7 @@ app.get('/api/listeners', (req, res) => {
 });
 
 /**
- * SERVICIO 5: Siguiente canción
- * POST /api/next-song
- */
-app.post('/api/next-song', (req, res) => {
-    // Guardar en historial
-    history.push({
-        ...playlist[currentSongIndex],
-        playedAt: new Date().toISOString()
-    });
-
-    // Avanzar a siguiente canción
-    currentSongIndex = (currentSongIndex + 1) % playlist.length;
-
-    const newSong = playlist[currentSongIndex];
-
-    // Notificar a todos los clientes vía Socket.io
-    io.emit('song-changed', newSong);
-
-    res.json({
-        success: true,
-        data: newSong
-    });
-});
-
-/**
- * SERVICIO 6: Info del servidor/radio
+ * SERVICIO 3: Info del servidor/radio
  * GET /api/info
  */
 app.get('/api/info', (req, res) => {
@@ -152,12 +96,8 @@ app.get('/api/info', (req, res) => {
         success: true,
         data: {
             name: "Radio Escolar FM",
-            description: "Tu estación de radio web escolar",
-            genre: "Variado",
-            website: "https://radio-escolar.vercel.app",
+            description: "Estación de Radio Web Escolar - Solo Voz",
             listeners: listeners.size,
-            totalSongs: playlist.length,
-            currentSong: playlist[currentSongIndex].title,
             uptime: process.uptime()
         }
     });
@@ -186,42 +126,54 @@ io.on('connection', (socket) => {
     // Notificar a todos el nuevo conteo
     io.emit('listeners-update', { count: listeners.size });
 
-    // Enviar canción actual al nuevo oyente
-    socket.emit('current-song', playlist[currentSongIndex]);
+    // Evento para autenticar como admin vía Socket.io
+    socket.on('admin-auth', (data) => {
+        if (data.username === ADMIN_CREDENTIALS.username && 
+            data.password === ADMIN_CREDENTIALS.password) {
+            adminSessions.set(socket.id, true);
+            socket.emit('admin-authenticated', { success: true });
+            console.log(`✅ Admin autenticado: ${socket.id}`);
+        } else {
+            socket.emit('admin-authenticated', { success: false });
+        }
+    });
 
     // Cuando el oyente se desconecta
     socket.on('disconnect', () => {
         listeners.delete(socket.id);
+        adminSessions.delete(socket.id);
         console.log(`👋 Oyente desconectado: ${socket.id} | Total: ${listeners.size}`);
         io.emit('listeners-update', { count: listeners.size });
     });
 
-    // Solicitud de siguiente canción
-    socket.on('request-next', () => {
-        history.push({
-            ...playlist[currentSongIndex],
-            playedAt: new Date().toISOString()
-        });
-        currentSongIndex = (currentSongIndex + 1) % playlist.length;
-        io.emit('song-changed', playlist[currentSongIndex]);
-    });
-
     // ===================================
     // TRANSMISIÓN DE VOZ (MICROFONO)
+    // Solo permitir si es admin
     // ===================================
     socket.on('voice-start', () => {
-        // Avizar a todos que va a hablar alguien (para bajar volumen de música)
-        socket.broadcast.emit('voice-start');
+        // Verificar si es admin
+        if (adminSessions.has(socket.id)) {
+            console.log(`🎤 Admin inició transmisión: ${socket.id}`);
+            socket.broadcast.emit('voice-start');
+        } else {
+            console.warn(`⚠️ Intento de transmisión sin permisos: ${socket.id}`);
+            socket.emit('error', { message: 'No tienes permisos para transmitir' });
+        }
     });
 
     socket.on('voice-data', (data) => {
-        // Retransmitir el audio a todos los demás
-        socket.broadcast.emit('voice-data', data);
+        // Solo retransmitir si es admin
+        if (adminSessions.has(socket.id)) {
+            socket.broadcast.emit('voice-data', data);
+        }
     });
 
     socket.on('voice-end', () => {
-        // Avisar que terminó de hablar
-        socket.broadcast.emit('voice-end');
+        // Solo procesar si es admin
+        if (adminSessions.has(socket.id)) {
+            console.log(`🎤 Admin terminó transmisión: ${socket.id}`);
+            socket.broadcast.emit('voice-end');
+        }
     });
 });
 
@@ -261,12 +213,9 @@ server.listen(PORT, () => {
     console.log('╚═══════════════════════════════════════════╝');
     console.log('');
     console.log('📋 Servicios API disponibles:');
-    console.log(`   GET  /api/current-song  - Canción actual`);
-    console.log(`   GET  /api/playlist      - Lista de canciones`);
-    console.log(`   GET  /api/history       - Historial`);
-    console.log(`   GET  /api/listeners     - Número de oyentes`);
-    console.log(`   POST /api/next-song     - Siguiente canción`);
-    console.log(`   GET  /api/info          - Info del servidor`);
-    console.log(`   GET  /api/health        - Estado del servidor`);
+    console.log(`   POST /api/login         - Login de administrador`);
+    console.log(`   GET  /api/listeners    - Número de oyentes`);
+    console.log(`   GET  /api/info         - Info del servidor`);
+    console.log(`   GET  /api/health       - Estado del servidor`);
     console.log('');
 });
