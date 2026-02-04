@@ -17,10 +17,7 @@ const elements = {
     volumeSlider: document.getElementById('volumeSlider'),
     volumeValue: document.getElementById('volumeValue'),
     muteBtn: document.getElementById('muteBtn'),
-    progress: document.getElementById('progress'),
-    currentTime: document.getElementById('currentTime'),
-    duration: document.getElementById('duration'),
-    progressBar: document.querySelector('.progress-bar'),
+    muteBtn: document.getElementById('muteBtn'),
     listenersCount: document.getElementById('listenersCount'),
     totalSongs: document.getElementById('totalSongs'),
     uptime: document.getElementById('uptime'),
@@ -82,25 +79,35 @@ function initializeSocket() {
 function initializeAudio() {
     elements.audioPlayer.volume = state.currentVolume;
 
-    elements.audioPlayer.addEventListener('timeupdate', updateProgress);
-    elements.audioPlayer.addEventListener('loadedmetadata', updateDuration);
     elements.audioPlayer.addEventListener('ended', handleSongEnd);
     elements.audioPlayer.addEventListener('error', (e) => {
         console.warn('Error de audio:', e);
     });
 
-    // Intentar reproducir automáticamente al cargar primera canción
-    elements.audioPlayer.addEventListener('canplay', () => {
-        elements.audioPlayer.play().catch(e => {
-            console.log('Autoplay bloqueado. Haz clic en la página para iniciar.');
+    // Intentar reproducir automáticamente
+    const playPromise = elements.audioPlayer.play();
+    if (playPromise !== undefined) {
+        playPromise.then(_ => {
+            elements.playOverlay.classList.add('hidden');
+            if (!state.audioContext) setupAudioContext();
+        }).catch(error => {
+            console.log('Autoplay prevenido. Esperando interacción.');
+            elements.playOverlay.classList.remove('hidden');
         });
-    }, { once: true });
+    }
 }
 
 function loadAudio(song) {
     if (song.audioUrl) {
+        const wasPlaying = !elements.playOverlay.classList.contains('hidden') === false;
         elements.audioPlayer.src = song.audioUrl;
-        elements.audioPlayer.play().catch(e => console.log('Autoplay blocked'));
+
+        if (wasPlaying || elements.audioPlayer.autoplay) {
+            elements.audioPlayer.play().then(() => {
+                elements.playOverlay.classList.add('hidden');
+                if (!state.audioContext) setupAudioContext();
+            }).catch(e => console.log('Esperando play manual'));
+        }
     }
 }
 
@@ -134,9 +141,6 @@ function initializeControls() {
     // Volumen
     elements.volumeSlider.addEventListener('input', handleVolumeChange);
     elements.muteBtn.addEventListener('click', toggleMute);
-
-    // Barra de progreso
-    elements.progressBar.addEventListener('click', handleProgressClick);
 }
 
 function handleVolumeChange(e) {
@@ -182,32 +186,7 @@ function updateVolumeIcon(volume) {
     }
 }
 
-function handleProgressClick(e) {
-    const rect = elements.progressBar.getBoundingClientRect();
-    const percent = (e.clientX - rect.left) / rect.width;
-    elements.audioPlayer.currentTime = percent * elements.audioPlayer.duration;
-}
 
-// PROGRESO
-function updateProgress() {
-    const { currentTime, duration } = elements.audioPlayer;
-    if (duration) {
-        const percent = (currentTime / duration) * 100;
-        elements.progress.style.width = `${percent}%`;
-        elements.currentTime.textContent = formatTime(currentTime);
-    }
-}
-
-function updateDuration() {
-    elements.duration.textContent = formatTime(elements.audioPlayer.duration);
-}
-
-function formatTime(seconds) {
-    if (isNaN(seconds)) return '0:00';
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-}
 
 // VISUALIZADOR DE ONDAS
 function setupAudioContext() {

@@ -1,18 +1,17 @@
 @echo off
 echo ==========================================
-echo        ACTUALIZANDO PAGINA WEB
+echo    ACTUALIZANDO A MODO RADIO (AUTO)
 echo ==========================================
 
 echo 1. Guardando cambios...
 git add .
-git commit -m "Correccion de ruta y archivos perdidos"
+git commit -m "Modo Radio: Sin barra de progreso + Autoplay agresivo"
 
-echo 2. Subiendo a la nube...
-echo (Si te pide login, ya sabes que hacer)
+echo 2. Subiendo a GitHub...
 git push origin main
 
 echo.
 echo ==========================================
-echo LISTO! Espera 2 minutos y recarga la pagina
+echo LISTO! Espera 2 minutos y recarga.
 echo ==========================================
 pause
