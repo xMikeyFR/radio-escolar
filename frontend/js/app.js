@@ -23,13 +23,13 @@ let state = {
     // Audio para reproducir voz recibida (oyentes)
     voiceAudioContext: null,
     voiceGainNode: null,
-    voiceAudioElement: null, // Elemento <audio> para reproducir chunks
-    mediaSource: null, // MediaSource API para reproducir chunks
-    voiceChunks: [], // Buffer de chunks para oyentes
+    voiceStreamSource: null, // MediaStreamSource para reproducir audio
     // Micrófono (solo admin)
     mediaStream: null,
     mediaRecorder: null,
-    isRecording: false
+    isRecording: false,
+    // Buffer para audio de oyentes
+    audioQueue: []
 };
 
 // INICIALIZACIÓN
@@ -122,9 +122,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // Hay sesión guardada (admin), verificar y mostrar panel
         checkSavedSession();
     } else {
-        // No hay sesión guardada - mostrar login para que admin pueda iniciar sesión
-        // o usuario puede hacer clic en "Continuar como Oyente"
-        showLogin();
+        // NO HAY SESIÓN - OYENTE: ir directo al panel SIN mostrar login
+        hideLogin();
+        showAdminControls();
     }
 
     initializeSocket();
@@ -186,10 +186,10 @@ function showAdminControls() {
             setupVisualizer();
         }
     } else {
-        // Oyente
+        // OYENTE: Configurar visualizador para voz recibida
         if (elements.micBtn) elements.micBtn.classList.add('hidden');
         if (elements.logoutBtn) elements.logoutBtn.classList.add('hidden');
-        // Visualizador para oyente (voz recibida)
+        // Visualizador para oyente (voz recibida) - INICIALIZAR SIEMPRE
         if (!state.audioContext) {
             setupListenerVisualizer();
         }
@@ -275,7 +275,7 @@ function setupVisualizer() {
     }
 }
 
-// Visualizador para OYENTE (voz recibida)
+// Visualizador para OYENTE (voz recibida) - SIEMPRE INICIALIZAR
 function setupListenerVisualizer() {
     if (state.isAdmin || !elements.visualizer) return;
 
@@ -284,12 +284,7 @@ function setupListenerVisualizer() {
         state.analyser = state.audioContext.createAnalyser();
         state.analyser.fftSize = 128;
         
-        // Conectar el visualizador al audio de voz recibida
-        if (state.voiceAudioContext && state.voiceGainNode) {
-            state.voiceGainNode.connect(state.analyser);
-            state.analyser.connect(state.voiceAudioContext.destination);
-        }
-        
+        // El visualizador se conectará cuando llegue audio de voz
         drawVisualizer();
     } catch (e) {
         console.log("AudioContext no soportado:", e);
@@ -538,7 +533,7 @@ function stopRecording() {
 }
 
 // =============================================
-// REPRODUCCIÓN DE VOZ (OYENTES)
+// REPRODUCCIÓN DE VOZ (OYENTES) - MÉTODO SIMPLE Y FUNCIONAL
 // =============================================
 
 function handleVoiceStart() {
@@ -550,11 +545,6 @@ function handleVoiceStart() {
         state.voiceGainNode = state.voiceAudioContext.createGain();
         state.voiceGainNode.gain.value = state.currentVolume;
         state.voiceGainNode.connect(state.voiceAudioContext.destination);
-        
-        // Configurar visualizador para oyente si aún no está configurado
-        if (!state.isAdmin && !state.audioContext) {
-            setupListenerVisualizer();
-        }
     }
 
     if (state.voiceAudioContext.state === 'suspended') {
@@ -563,164 +553,107 @@ function handleVoiceStart() {
         });
     }
     
-    // Limpiar buffer de chunks
-    state.voiceChunks = [];
+    // Limpiar cola de audio
+    state.audioQueue = [];
     
-    // Crear elemento <audio> si no existe
-    if (!state.voiceAudioElement) {
-        state.voiceAudioElement = document.createElement('audio');
-        state.voiceAudioElement.autoplay = true;
-        state.voiceAudioElement.style.display = 'none';
-        document.body.appendChild(state.voiceAudioElement);
-        
-        // Conectar el audio element al visualizador si es oyente
-        if (!state.isAdmin && state.audioContext) {
-            try {
-                const source = state.audioContext.createMediaElementSource(state.voiceAudioElement);
-                source.connect(state.analyser);
-                state.analyser.connect(state.audioContext.destination);
-            } catch (e) {
-                console.warn('⚠️ No se pudo conectar audio al visualizador:', e);
-            }
-        }
+    // Configurar visualizador para oyente si aún no está configurado
+    if (!state.isAdmin && !state.audioContext) {
+        setupListenerVisualizer();
     }
 }
 
 async function handleVoiceData(data) {
-    if (!data.audio || !state.voiceAudioContext) return;
+    if (!data.audio || !state.voiceAudioContext) {
+        console.warn('⚠️ No hay audio o AudioContext');
+        return;
+    }
 
     try {
         if (state.voiceAudioContext.state === 'suspended') {
             await state.voiceAudioContext.resume();
         }
 
-        // Agregar chunk al buffer
-        const chunk = new Uint8Array(data.audio);
-        state.voiceChunks.push(chunk);
+        // Convertir array a Uint8Array
+        const audioData = new Uint8Array(data.audio);
         
-        // Usar MediaSource API para reproducir chunks en tiempo real
-        if (!state.mediaSource || state.mediaSource.readyState === 'closed') {
-            if (state.mediaSource) {
-                state.mediaSource = null;
-            }
-            
-            state.mediaSource = new MediaSource();
-            const url = URL.createObjectURL(state.mediaSource);
-            
-            if (state.voiceAudioElement) {
-                state.voiceAudioElement.src = url;
-                state.voiceAudioElement.volume = state.currentVolume;
+        // Crear blob con el chunk
+        const audioBlob = new Blob([audioData], { 
+            type: data.mimeType || 'audio/webm;codecs=opus' 
+        });
+        
+        // Crear URL del blob
+        const blobUrl = URL.createObjectURL(audioBlob);
+        
+        // Crear elemento Audio y reproducir
+        const audioElement = new Audio(blobUrl);
+        audioElement.volume = state.currentVolume;
+        
+        // Conectar al visualizador si es oyente
+        if (!state.isAdmin && state.audioContext && state.analyser) {
+            try {
+                // Si ya hay una conexión, no crear otra
+                if (!state.voiceStreamSource) {
+                    const mediaStream = state.voiceAudioContext.createMediaStreamDestination();
+                    state.voiceStreamSource = state.audioContext.createMediaStreamSource(mediaStream.stream);
+                    state.voiceStreamSource.connect(state.analyser);
+                    state.analyser.connect(state.audioContext.destination);
+                }
                 
-                state.mediaSource.addEventListener('sourceopen', () => {
-                    try {
-                        const sourceBuffer = state.mediaSource.addSourceBuffer('audio/webm; codecs="opus"');
-                        sourceBuffer.addEventListener('updateend', () => {
-                            if (!sourceBuffer.updating && state.mediaSource.readyState === 'open') {
-                                // Intentar reproducir
-                                if (state.voiceAudioElement && state.voiceAudioElement.paused) {
-                                    state.voiceAudioElement.play().catch(err => {
-                                        console.warn('⚠️ Error al reproducir:', err);
-                                    });
-                                }
-                            }
-                        });
-                        
-                        // Agregar todos los chunks acumulados
-                        const allChunks = new Blob(state.voiceChunks, { type: 'audio/webm' });
-                        allChunks.arrayBuffer().then(buffer => {
-                            if (!sourceBuffer.updating && state.mediaSource.readyState === 'open') {
-                                sourceBuffer.appendBuffer(buffer);
-                            }
-                        });
-                    } catch (e) {
-                        // Fallback: usar método simple con blob URL
-                        console.warn('⚠️ MediaSource no soportado, usando método alternativo:', e);
-                        useSimpleAudioPlayback(data);
-                    }
-                });
+                // Conectar el audio element al visualizador
+                const source = state.audioContext.createMediaElementSource(audioElement);
+                source.connect(state.analyser);
+                state.analyser.connect(state.audioContext.destination);
+            } catch (e) {
+                // Si falla, solo reproducir sin visualizador
+                console.warn('⚠️ No se pudo conectar al visualizador:', e);
             }
-        } else if (state.mediaSource.readyState === 'open') {
-            // Agregar nuevo chunk al source buffer existente
-            const sourceBuffers = state.mediaSource.sourceBuffers;
-            if (sourceBuffers.length > 0 && !sourceBuffers[0].updating) {
-                const audioBlob = new Blob([chunk], { type: 'audio/webm' });
-                audioBlob.arrayBuffer().then(buffer => {
-                    if (!sourceBuffers[0].updating && state.mediaSource.readyState === 'open') {
-                        sourceBuffers[0].appendBuffer(buffer);
-                    }
-                });
+        }
+        
+        // Reproducir audio
+        audioElement.play().catch(err => {
+            console.warn('⚠️ Error al reproducir chunk:', err);
+        });
+        
+        // Limpiar URL después de reproducir
+        audioElement.addEventListener('ended', () => {
+            URL.revokeObjectURL(blobUrl);
+        });
+        
+        // También conectar directamente al gain node para asegurar que se escuche
+        if (state.voiceGainNode) {
+            // Usar Web Audio API para reproducir
+            try {
+                const arrayBuffer = await audioBlob.arrayBuffer();
+                const audioBuffer = await state.voiceAudioContext.decodeAudioData(arrayBuffer);
+                const source = state.voiceAudioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(state.voiceGainNode);
+                source.start(0);
+                
+                source.onended = () => {
+                    source.disconnect();
+                };
+            } catch (decodeError) {
+                // Si falla decodeAudioData, usar el método del audio element
+                console.log('Usando método alternativo de reproducción');
             }
         }
 
     } catch (error) {
         console.warn('⚠️ Error al reproducir audio de voz:', error);
-        // Fallback a método simple
-        useSimpleAudioPlayback(data);
     }
-}
-
-// Método alternativo: reproducir cada chunk como blob URL individual
-function useSimpleAudioPlayback(data) {
-    if (!data.audio) return;
-    
-    const chunk = new Uint8Array(data.audio);
-    const audioBlob = new Blob([chunk], { 
-        type: data.mimeType || 'audio/webm' 
-    });
-    
-    const blobUrl = URL.createObjectURL(audioBlob);
-    
-    if (!state.voiceAudioElement) {
-        state.voiceAudioElement = document.createElement('audio');
-        state.voiceAudioElement.autoplay = true;
-        state.voiceAudioElement.style.display = 'none';
-        document.body.appendChild(state.voiceAudioElement);
-    }
-    
-    // Crear un nuevo elemento audio para cada chunk (método simple pero funcional)
-    const audioChunk = new Audio(blobUrl);
-    audioChunk.volume = state.currentVolume;
-    
-    // Conectar al visualizador si es oyente
-    if (!state.isAdmin && state.audioContext) {
-        try {
-            const source = state.audioContext.createMediaElementSource(audioChunk);
-            source.connect(state.analyser);
-            state.analyser.connect(state.audioContext.destination);
-        } catch (e) {
-            // Si ya hay una conexión, solo reproducir
-        }
-    }
-    
-    audioChunk.play().catch(err => {
-        console.warn('⚠️ Error al reproducir chunk:', err);
-    });
-    
-    // Limpiar URL después de reproducir
-    audioChunk.addEventListener('ended', () => {
-        URL.revokeObjectURL(blobUrl);
-    });
 }
 
 function handleVoiceEnd() {
     console.log('👂 Nadie está hablando');
     
-    // Limpiar buffer
-    state.voiceChunks = [];
+    // Limpiar cola
+    state.audioQueue = [];
     
-    // Cerrar MediaSource si está abierto
-    if (state.mediaSource && state.mediaSource.readyState === 'open') {
-        try {
-            state.mediaSource.endOfStream();
-        } catch (e) {
-            console.warn('⚠️ Error al cerrar MediaSource:', e);
-        }
-    }
-    
-    // Limpiar elemento audio
-    if (state.voiceAudioElement) {
-        state.voiceAudioElement.pause();
-        state.voiceAudioElement.src = '';
+    // Limpiar source del visualizador
+    if (state.voiceStreamSource) {
+        state.voiceStreamSource.disconnect();
+        state.voiceStreamSource = null;
     }
 }
 
