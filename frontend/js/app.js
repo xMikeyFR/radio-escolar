@@ -16,13 +16,16 @@ let state = {
     currentVolume: 0.75,
     isMuted: false,
     socket: null,
-    // Audio para visualizador (solo admin)
+    // Audio para visualizador (admin: micrófono, oyente: voz recibida)
     audioContext: null,
     analyser: null,
     microphoneSource: null,
     // Audio para reproducir voz recibida (oyentes)
     voiceAudioContext: null,
     voiceGainNode: null,
+    voiceAudioElement: null, // Elemento <audio> para reproducir chunks
+    mediaSource: null, // MediaSource API para reproducir chunks
+    voiceChunks: [], // Buffer de chunks para oyentes
     // Micrófono (solo admin)
     mediaStream: null,
     mediaRecorder: null,
@@ -113,13 +116,15 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     
-    // Verificar si hay sesión guardada
+    // Verificar si hay sesión guardada (solo para admin)
     const savedSession = localStorage.getItem('radioAdminSession');
     if (savedSession === 'true') {
-        // Intentar autenticar automáticamente
+        // Solo admin tiene sesión guardada, mostrar login para verificar
         checkSavedSession();
     } else {
-        showLogin();
+        // Si no hay sesión guardada, es un oyente - ir directo al panel
+        hideLogin();
+        showAdminControls();
     }
 
     initializeSocket();
@@ -176,15 +181,17 @@ function showAdminControls() {
     if (state.isAdmin) {
         if (elements.micBtn) elements.micBtn.classList.remove('hidden');
         if (elements.logoutBtn) elements.logoutBtn.classList.remove('hidden');
+        // Visualizador para admin (micrófono)
         if (!state.audioContext) {
             setupVisualizer();
         }
     } else {
+        // Oyente
         if (elements.micBtn) elements.micBtn.classList.add('hidden');
         if (elements.logoutBtn) elements.logoutBtn.classList.add('hidden');
-        if (elements.visualizer) {
-            const ctx = elements.visualizer.getContext('2d');
-            ctx.clearRect(0, 0, elements.visualizer.width, elements.visualizer.height);
+        // Visualizador para oyente (voz recibida)
+        if (!state.audioContext) {
+            setupListenerVisualizer();
         }
     }
 }
@@ -251,9 +258,10 @@ function initializeSocket() {
 }
 
 // =============================================
-// VISUALIZADOR (SOLO ADMIN)
+// VISUALIZADOR
 // =============================================
 
+// Visualizador para ADMIN (micrófono)
 function setupVisualizer() {
     if (!state.isAdmin || !elements.visualizer) return;
 
@@ -267,8 +275,29 @@ function setupVisualizer() {
     }
 }
 
+// Visualizador para OYENTE (voz recibida)
+function setupListenerVisualizer() {
+    if (state.isAdmin || !elements.visualizer) return;
+
+    try {
+        state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        state.analyser = state.audioContext.createAnalyser();
+        state.analyser.fftSize = 128;
+        
+        // Conectar el visualizador al audio de voz recibida
+        if (state.voiceAudioContext && state.voiceGainNode) {
+            state.voiceGainNode.connect(state.analyser);
+            state.analyser.connect(state.voiceAudioContext.destination);
+        }
+        
+        drawVisualizer();
+    } catch (e) {
+        console.log("AudioContext no soportado:", e);
+    }
+}
+
 function drawVisualizer() {
-    if (!state.isAdmin || !state.analyser || !elements.visualizer) return;
+    if (!state.analyser || !elements.visualizer) return;
 
     const canvas = elements.visualizer;
     const ctx = canvas.getContext('2d');
@@ -513,11 +542,19 @@ function stopRecording() {
 // =============================================
 
 function handleVoiceStart() {
+    console.log('👂 Alguien está hablando');
+    
+    // Inicializar AudioContext para oyentes
     if (!state.voiceAudioContext) {
         state.voiceAudioContext = new (window.AudioContext || window.webkitAudioContext)();
         state.voiceGainNode = state.voiceAudioContext.createGain();
         state.voiceGainNode.gain.value = state.currentVolume;
         state.voiceGainNode.connect(state.voiceAudioContext.destination);
+        
+        // Configurar visualizador para oyente si aún no está configurado
+        if (!state.isAdmin && !state.audioContext) {
+            setupListenerVisualizer();
+        }
     }
 
     if (state.voiceAudioContext.state === 'suspended') {
@@ -525,8 +562,28 @@ function handleVoiceStart() {
             console.warn('⚠️ No se pudo reanudar AudioContext:', err);
         });
     }
-
-    console.log('👂 Alguien está hablando');
+    
+    // Limpiar buffer de chunks
+    state.voiceChunks = [];
+    
+    // Crear elemento <audio> si no existe
+    if (!state.voiceAudioElement) {
+        state.voiceAudioElement = document.createElement('audio');
+        state.voiceAudioElement.autoplay = true;
+        state.voiceAudioElement.style.display = 'none';
+        document.body.appendChild(state.voiceAudioElement);
+        
+        // Conectar el audio element al visualizador si es oyente
+        if (!state.isAdmin && state.audioContext) {
+            try {
+                const source = state.audioContext.createMediaElementSource(state.voiceAudioElement);
+                source.connect(state.analyser);
+                state.analyser.connect(state.audioContext.destination);
+            } catch (e) {
+                console.warn('⚠️ No se pudo conectar audio al visualizador:', e);
+            }
+        }
+    }
 }
 
 async function handleVoiceData(data) {
@@ -537,35 +594,134 @@ async function handleVoiceData(data) {
             await state.voiceAudioContext.resume();
         }
 
-        const audioBlob = new Blob([new Uint8Array(data.audio)], { 
-            type: data.mimeType || 'audio/webm' 
-        });
-
-        const arrayBuffer = await audioBlob.arrayBuffer();
+        // Agregar chunk al buffer
+        const chunk = new Uint8Array(data.audio);
+        state.voiceChunks.push(chunk);
         
-        try {
-            const audioBuffer = await state.voiceAudioContext.decodeAudioData(arrayBuffer);
-            const source = state.voiceAudioContext.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(state.voiceGainNode);
-            source.start(0);
-
-            source.onended = () => {
-                source.disconnect();
-            };
-        } catch (decodeError) {
-            if (decodeError.name !== 'EncodingError') {
-                console.warn('⚠️ Error al decodificar chunk de audio:', decodeError);
+        // Usar MediaSource API para reproducir chunks en tiempo real
+        if (!state.mediaSource || state.mediaSource.readyState === 'closed') {
+            if (state.mediaSource) {
+                state.mediaSource = null;
+            }
+            
+            state.mediaSource = new MediaSource();
+            const url = URL.createObjectURL(state.mediaSource);
+            
+            if (state.voiceAudioElement) {
+                state.voiceAudioElement.src = url;
+                state.voiceAudioElement.volume = state.currentVolume;
+                
+                state.mediaSource.addEventListener('sourceopen', () => {
+                    try {
+                        const sourceBuffer = state.mediaSource.addSourceBuffer('audio/webm; codecs="opus"');
+                        sourceBuffer.addEventListener('updateend', () => {
+                            if (!sourceBuffer.updating && state.mediaSource.readyState === 'open') {
+                                // Intentar reproducir
+                                if (state.voiceAudioElement && state.voiceAudioElement.paused) {
+                                    state.voiceAudioElement.play().catch(err => {
+                                        console.warn('⚠️ Error al reproducir:', err);
+                                    });
+                                }
+                            }
+                        });
+                        
+                        // Agregar todos los chunks acumulados
+                        const allChunks = new Blob(state.voiceChunks, { type: 'audio/webm' });
+                        allChunks.arrayBuffer().then(buffer => {
+                            if (!sourceBuffer.updating && state.mediaSource.readyState === 'open') {
+                                sourceBuffer.appendBuffer(buffer);
+                            }
+                        });
+                    } catch (e) {
+                        // Fallback: usar método simple con blob URL
+                        console.warn('⚠️ MediaSource no soportado, usando método alternativo:', e);
+                        useSimpleAudioPlayback(data);
+                    }
+                });
+            }
+        } else if (state.mediaSource.readyState === 'open') {
+            // Agregar nuevo chunk al source buffer existente
+            const sourceBuffers = state.mediaSource.sourceBuffers;
+            if (sourceBuffers.length > 0 && !sourceBuffers[0].updating) {
+                const audioBlob = new Blob([chunk], { type: 'audio/webm' });
+                audioBlob.arrayBuffer().then(buffer => {
+                    if (!sourceBuffers[0].updating && state.mediaSource.readyState === 'open') {
+                        sourceBuffers[0].appendBuffer(buffer);
+                    }
+                });
             }
         }
 
     } catch (error) {
         console.warn('⚠️ Error al reproducir audio de voz:', error);
+        // Fallback a método simple
+        useSimpleAudioPlayback(data);
     }
+}
+
+// Método alternativo: reproducir cada chunk como blob URL individual
+function useSimpleAudioPlayback(data) {
+    if (!data.audio) return;
+    
+    const chunk = new Uint8Array(data.audio);
+    const audioBlob = new Blob([chunk], { 
+        type: data.mimeType || 'audio/webm' 
+    });
+    
+    const blobUrl = URL.createObjectURL(audioBlob);
+    
+    if (!state.voiceAudioElement) {
+        state.voiceAudioElement = document.createElement('audio');
+        state.voiceAudioElement.autoplay = true;
+        state.voiceAudioElement.style.display = 'none';
+        document.body.appendChild(state.voiceAudioElement);
+    }
+    
+    // Crear un nuevo elemento audio para cada chunk (método simple pero funcional)
+    const audioChunk = new Audio(blobUrl);
+    audioChunk.volume = state.currentVolume;
+    
+    // Conectar al visualizador si es oyente
+    if (!state.isAdmin && state.audioContext) {
+        try {
+            const source = state.audioContext.createMediaElementSource(audioChunk);
+            source.connect(state.analyser);
+            state.analyser.connect(state.audioContext.destination);
+        } catch (e) {
+            // Si ya hay una conexión, solo reproducir
+        }
+    }
+    
+    audioChunk.play().catch(err => {
+        console.warn('⚠️ Error al reproducir chunk:', err);
+    });
+    
+    // Limpiar URL después de reproducir
+    audioChunk.addEventListener('ended', () => {
+        URL.revokeObjectURL(blobUrl);
+    });
 }
 
 function handleVoiceEnd() {
     console.log('👂 Nadie está hablando');
+    
+    // Limpiar buffer
+    state.voiceChunks = [];
+    
+    // Cerrar MediaSource si está abierto
+    if (state.mediaSource && state.mediaSource.readyState === 'open') {
+        try {
+            state.mediaSource.endOfStream();
+        } catch (e) {
+            console.warn('⚠️ Error al cerrar MediaSource:', e);
+        }
+    }
+    
+    // Limpiar elemento audio
+    if (state.voiceAudioElement) {
+        state.voiceAudioElement.pause();
+        state.voiceAudioElement.src = '';
+    }
 }
 
 // =============================================
