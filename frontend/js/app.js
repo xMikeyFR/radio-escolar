@@ -116,15 +116,15 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     
-    // Verificar si hay sesión guardada (solo para admin)
+    // Verificar si hay sesión guardada
     const savedSession = localStorage.getItem('radioAdminSession');
     if (savedSession === 'true') {
-        // Solo admin tiene sesión guardada, mostrar login para verificar
+        // Hay sesión guardada (admin), verificar y mostrar panel
         checkSavedSession();
     } else {
-        // Si no hay sesión guardada, es un oyente - ir directo al panel
-        hideLogin();
-        showAdminControls();
+        // No hay sesión guardada - mostrar login para que admin pueda iniciar sesión
+        // o usuario puede hacer clic en "Continuar como Oyente"
+        showLogin();
     }
 
     initializeSocket();
