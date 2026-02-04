@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Radio Escolar FM</title>
+    <meta name="description" content="Estación de Radio Web Escolar - Música 24/7">
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Iconos -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Socket.io -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+    <!-- Estilos -->
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+
+    <!-- Contenedor principal -->
+    <div class="app-container">
+
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <i class="fas fa-radio"></i>
+                <span>Radio Escolar FM</span>
+            </div>
+            <div class="live-badge">
+                <span class="pulse"></span>
+                EN VIVO
+            </div>
+        </header>
+
+        <!-- Reproductor Principal -->
+        <main class="player-container">
+
+            <!-- Carátula del álbum -->
+            <div class="album-art-container">
+                <img id="albumCover" src="https://picsum.photos/seed/radio/300/300" alt="Album Cover" class="album-art">
+                <button id="playOverlay" class="play-overlay" title="Iniciar Reproducción">
+                    <i class="fas fa-play"></i>
+                </button>
+            </div>
+
+            <!-- Info de la canción -->
+            <div class="song-info">
+                <h1 id="songTitle" class="song-title">Cargando...</h1>
+                <p id="songArtist" class="song-artist">Conectando a la radio...</p>
+                <p id="songAlbum" class="song-album"></p>
+            </div>
+
+            <!-- Barra de progreso -->
+            <div class="progress-container">
+                <span id="currentTime" class="time">0:00</span>
+                <div class="progress-bar">
+                    <div id="progress" class="progress"></div>
+                </div>
+                <span id="duration" class="time">0:00</span>
+            </div>
+
+            <!-- Visualizador de Ondas -->
+            <canvas id="visualizer" height="60"></canvas>
+
+            <!-- Control de volumen -->
+            <div class="volume-container">
+                <button id="muteBtn" class="volume-btn" title="Silenciar">
+                    <i class="fas fa-volume-high"></i>
+                </button>
+                <input type="range" id="volumeSlider" class="volume-slider" min="0" max="100" value="75">
+                <span id="volumeValue" class="volume-value">75%</span>
+            </div>
+
+        </main>
+
+        <!-- Stats en tiempo real -->
+        <section class="stats-section">
+            <div class="stat-card">
+                <i class="fas fa-headphones"></i>
+                <div class="stat-info">
+                    <span id="listenersCount" class="stat-value">0</span>
+                    <span class="stat-label">Oyentes</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <i class="fas fa-music"></i>
+                <div class="stat-info">
+                    <span id="totalSongs" class="stat-value">0</span>
+                    <span class="stat-label">Canciones</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <i class="fas fa-clock"></i>
+                <div class="stat-info">
+                    <span id="uptime" class="stat-value">24/7</span>
+                    <span class="stat-label">En Línea</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Playlist -->
+        <section class="playlist-section">
+            <h2 class="section-title">
+                <i class="fas fa-list"></i>
+                Playlist
+            </h2>
+            <div id="playlistContainer" class="playlist-container">
+                <!-- Las canciones se cargan dinámicamente -->
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Radio Escolar FM - Proyecto de Aplicaciones Web Orientadas a Servicios</p>
+        </footer>
+    </div>
+
+    <!-- Audio Element (oculto) -->
+    <audio id="audioPlayer" preload="auto" autoplay></audio>
+
+    <!-- JavaScript -->
+    <script src="js/app.js"></script>
+</body>
+
+</html>

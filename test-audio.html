@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test de Audio</title>
+    <style>
+        body {
+            background: #0f0f1a;
+            color: white;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #6366f1;
+        }
+
+        button {
+            background: linear-gradient(135deg, #6366f1, #ec4899);
+            border: none;
+            color: white;
+            padding: 20px 40px;
+            font-size: 24px;
+            border-radius: 50px;
+            cursor: pointer;
+            margin: 10px;
+        }
+
+        button:hover {
+            opacity: 0.8;
+        }
+
+        #status {
+            margin-top: 20px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            max-width: 600px;
+        }
+
+        .success {
+            color: #10b981;
+        }
+
+        .error {
+            color: #ef4444;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🔊 TEST DE AUDIO SIMPLE</h1>
+    <p>Haz clic en el botón para probar el audio:</p>
+
+    <button id="playBtn" onclick="testAudio()">▶️ REPRODUCIR AUDIO</button>
+
+    <div id="status"></div>
+
+    <audio id="testAudio" preload="auto">
+        <source src="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" type="audio/mpeg">
+    </audio>
+
+    <script>
+        const audio = document.getElementById('testAudio');
+        const statusDiv = document.getElementById('status');
+
+        function log(message, isError = false) {
+            const p = document.createElement('p');
+            p.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+            p.className = isError ? 'error' : 'success';
+            statusDiv.appendChild(p);
+            console.log(message);
+        }
+
+        function testAudio() {
+            log('🎵 Intentando reproducir audio...');
+
+            audio.play()
+                .then(() => {
+                    log('✅ ¡AUDIO REPRODUCIÉNDOSE! Si escuchas música, tu navegador está OK.');
+                })
+                .catch((error) => {
+                    log(`❌ ERROR: ${error.message}`, true);
+                    log('💡 Solución: Dale clic al botón de nuevo o sube el volumen.', false);
+                });
+        }
+
+        // Event listeners para debugging
+        audio.addEventListener('loadstart', () => log('📥 Cargando audio...'));
+        audio.addEventListener('canplay', () => log('✅ Audio listo para reproducir'));
+        audio.addEventListener('playing', () => log('🎵 Reproduciendo...'));
+        audio.addEventListener('pause', () => log('⏸️ Pausado'));
+        audio.addEventListener('ended', () => log('✅ Audio terminó'));
+        audio.addEventListener('error', (e) => {
+            log(`❌ Error de carga: ${e.message || 'No se pudo cargar el archivo'}`, true);
+        });
+
+        // Check inicial
+        window.addEventListener('load', () => {
+            log('🌐 Página cargada correctamente');
+            log(`📊 Audio ready state: ${audio.readyState}`);
+        });
+    </script>
+</body>
+
+</html>

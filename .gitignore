@@ -1,0 +1,12 @@
+# Dependencies
+node_modules/
+npm-debug.log
+
+# Environment variables
+.env
+
+# MacOS
+.DS_Store
+
+# Windows
+Thumbs.db

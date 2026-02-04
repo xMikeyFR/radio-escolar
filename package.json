@@ -1,0 +1,18 @@
+{
+  "name": "radio-web-escolar",
+  "version": "1.0.0",
+  "description": "Estación de Radio Web - Proyecto Escolar con Arquitectura Orientada a Servicios",
+  "main": "backend/server.js",
+  "scripts": {
+    "start": "node backend/server.js",
+    "dev": "node backend/server.js"
+  },
+  "keywords": ["radio", "streaming", "nodejs", "express", "soa"],
+  "author": "Estudiante",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "socket.io": "^4.7.2"
+  }
+}

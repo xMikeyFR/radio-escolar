@@ -1,0 +1,441 @@
+/* ================================================
+   RADIO ESCOLAR FM - ESTIL OS MINIMALISTAS
+   ================================================ */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    /* Colores profesionales y sobrios */
+    --bg-primary: #1a1a1a;
+    --bg-secondary: #242424;
+    --bg-card: #2a2a2a;
+    --text-primary: #ffffff;
+    --text-secondary: #a0a0a0;
+    --accent: #4a90e2;
+    --accent-hover: #357ab8;
+    --border: #3a3a3a;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.6;
+    min-height: 100vh;
+}
+
+.app-container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* ================================================
+   HEADER
+   ================================================ */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 0;
+    margin-bottom: 30px;
+    border-bottom: 1px solid var(--border);
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 1.3rem;
+    font-weight: 600;
+}
+
+.logo i {
+    color: var(--accent);
+    font-size: 1.5rem;
+}
+
+.live-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg-card);
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #ff4757;
+}
+
+.pulse {
+    width: 8px;
+    height: 8px;
+    background: #ff4757;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.3;
+    }
+}
+
+/* ================================================
+   REPRODUCTOR
+   ================================================ */
+.player-container {
+    background: var(--bg-secondary);
+    border-radius: 12px;
+    padding: 40px;
+    margin-bottom: 30px;
+    border: 1px solid var(--border);
+}
+
+.album-art-container {
+    text-align: center;
+    margin-bottom: 30px;
+    position: relative;
+}
+
+.album-art {
+    width: 280px;
+    height: 280px;
+    border-radius: 8px;
+    object-fit: cover;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.play-overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: none;
+    color: white;
+    font-size: 2rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 20px rgba(74, 144, 226, 0.5);
+}
+
+.play-overlay:hover {
+    background: var(--accent-hover);
+    transform: translate(-50%, -50%) scale(1.1);
+}
+
+.play-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.play-overlay i {
+    margin-left: 4px;
+}
+
+.song-info {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+.song-title {
+    font-size: 1.8rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.song-artist {
+    font-size: 1.1rem;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+
+.song-album {
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+}
+
+/* ================================================
+   BARRA DE PROGRESO
+   ================================================ */
+.progress-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 25px;
+}
+
+.time {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    min-width: 42px;
+    font-variant-numeric: tabular-nums;
+}
+
+.progress-bar {
+    flex: 1;
+    height: 6px;
+    background: var(--bg-card);
+    border-radius: 3px;
+    overflow: hidden;
+    cursor: pointer;
+}
+
+.progress {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.1s linear;
+}
+
+/* ================================================
+   VISUALIZADOR
+   ================================================ */
+#visualizer {
+    width: 100%;
+    height: 60px;
+    margin-bottom: 25px;
+    display: block;
+}
+
+/* ================================================
+   CONTROL DE VOLUMEN
+   ================================================ */
+.volume-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    justify-content: center;
+}
+
+.volume-btn {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.volume-btn:hover {
+    background: var(--bg-primary);
+}
+
+.volume-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 180px;
+    height: 6px;
+    background: var(--bg-card);
+    outline: none;
+    border-radius: 3px;
+}
+
+.volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    background: var(--accent);
+    cursor: pointer;
+    border-radius: 50%;
+}
+
+.volume-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    background: var(--accent);
+    cursor: pointer;
+    border-radius: 50%;
+    border: none;
+}
+
+.volume-value {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    min-width: 42px;
+    text-align: right;
+}
+
+/* ================================================
+   STATS
+   ================================================ */
+.stats-section {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin-bottom: 30px;
+}
+
+.stat-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.stat-card i {
+    font-size: 1.8rem;
+    color: var(--accent);
+}
+
+.stat-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.stat-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+}
+
+.stat-label {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+/* ================================================
+   PLAYLIST
+   ================================================ */
+.playlist-section {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 30px;
+    margin-bottom: 30px;
+}
+
+.section-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 1.3rem;
+    font-weight: 600;
+    margin-bottom: 20px;
+}
+
+.section-title i {
+    color: var(--accent);
+}
+
+.playlist-container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.playlist-item {
+    background: var(--bg-card);
+    padding: 15px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.playlist-item:hover {
+    background: var(--bg-primary);
+}
+
+.playlist-item.active {
+    background: var(--accent);
+    color: var(--bg-primary);
+}
+
+.playlist-cover {
+    width: 50px;
+    height: 50px;
+    border-radius: 4px;
+    object-fit: cover;
+}
+
+.playlist-info {
+    flex: 1;
+}
+
+.playlist-title {
+    font-weight: 500;
+    margin-bottom: 2px;
+}
+
+.playlist-artist {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.playlist-item.active .playlist-artist {
+    color: rgba(0, 0, 0, 0.7);
+}
+
+.playlist-duration {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+/* ================================================
+   FOOTER
+   ================================================ */
+.footer {
+    text-align: center;
+    padding: 30px 0 20px;
+    border-top: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+/* ================================================
+   RESPONSIVE
+   ================================================ */
+@media (max-width: 768px) {
+    .app-container {
+        padding: 15px;
+    }
+
+    .player-container {
+        padding: 30px 20px;
+    }
+
+    .album-art {
+        width: 220px;
+        height: 220px;
+    }
+
+    .song-title {
+        font-size: 1.4rem;
+    }
+
+    .volume-slider {
+        width: 120px;
+    }
+
+    .stats-section {
+        grid-template-columns: 1fr;
+    }
+}
