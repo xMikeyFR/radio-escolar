@@ -210,8 +210,20 @@ io.on('connection', (socket) => {
 // =============================================
 // RUTA PRINCIPAL - Servir Frontend
 // =============================================
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, '../frontend/index.html'));
+// =============================================
+// RUTA PRINCIPAL - Catch-all para SPA
+// =============================================
+app.get('*', (req, res) => {
+    const indexPath = path.join(__dirname, '../frontend/index.html');
+    console.log(`Petición a root: ${req.url}`);
+
+    // Verificar si existe el archivo (Debug para Render)
+    if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+    } else {
+        console.error('ERROR CRÍTICO: No encuentro index.html en:', indexPath);
+        res.status(500).send(`Error: No encuentro el archivo frontend/index.html en la ruta: ${indexPath}`);
+    }
 });
 
 // =============================================

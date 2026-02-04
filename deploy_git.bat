@@ -1,29 +1,18 @@
 @echo off
 echo ==========================================
-echo    PREPARANDO SUBIDA A GITHUB (INTENTO 3)
+echo        ACTUALIZANDO PAGINA WEB
 echo ==========================================
 
-echo 1. Inicializando Git...
-git init
-
-echo 1.5 Configurando usuario temporal de Git...
-git config user.email "radio@escolar.com"
-git config user.name "Radio Escolar"
-
+echo 1. Guardando cambios...
 git add .
-git commit -m "Mi Radio Web Lista"
+git commit -m "Correccion de ruta y archivos perdidos"
 
-echo 2. Conectando con GitHub...
-git branch -M main
-git remote remove origin
-git remote add origin https://github.com/xMikeyFR/radio-escolar.git
-
-echo 3. Subiendo archivos...
-echo (Si te pide login, usa tu cuenta de GitHub)
-git push -u origin main
+echo 2. Subiendo a la nube...
+echo (Si te pide login, ya sabes que hacer)
+git push origin main
 
 echo.
 echo ==========================================
-echo Ojala ahora si :)
+echo LISTO! Espera 2 minutos y recarga la pagina
 echo ==========================================
 pause
