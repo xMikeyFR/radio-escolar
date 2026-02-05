@@ -96,6 +96,11 @@ function initializeSocket() {
             }
         });
 
+        // WebRTC: Cuando hay un locutor disponible
+        state.socket.on('broadcaster-ready', () => {
+            console.log('📡 Locutor disponible, esperando offer...');
+        });
+
         // WebRTC: Recibir offer del locutor
         state.socket.on('webrtc-offer', async (data) => {
             const { offer, from } = data;

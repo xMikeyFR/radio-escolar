@@ -47,6 +47,7 @@ const ADMIN_CREDENTIALS = {
 // Almacenar sesiones activas (socket.id -> isAdmin)
 const adminSessions = new Map();
 let listeners = new Set();
+let broadcasterId = null; // ID del locutor activo
 
 // =============================================
 // SERVICIOS REST (APIs)
@@ -153,17 +154,17 @@ io.on('connection', (socket) => {
     // Cuando el locutor está listo para transmitir
     socket.on('broadcaster-ready', () => {
         if (adminSessions.has(socket.id)) {
+            broadcasterId = socket.id;
             console.log(`🎤 Locutor listo para transmitir: ${socket.id}`);
-            // Notificar a todos los oyentes que hay un locutor disponible
-            socket.broadcast.emit('new-listener', socket.id);
+            // Notificar a todos los oyentes actuales que hay un locutor
+            socket.broadcast.emit('broadcaster-ready');
         }
     });
     
-    // Cuando un nuevo oyente se conecta y hay un locutor activo
-    // Notificar al locutor sobre el nuevo oyente
-    const adminSocketId = Array.from(adminSessions.keys())[0];
-    if (adminSocketId) {
-        io.to(adminSocketId).emit('new-listener', socket.id);
+    // Cuando un nuevo oyente se conecta y hay un locutor activo, notificar al locutor
+    if (broadcasterId && !adminSessions.has(socket.id)) {
+        io.to(broadcasterId).emit('new-listener', socket.id);
+        console.log(`👂 Notificando locutor sobre nuevo oyente: ${socket.id}`);
     }
     
     // Reenviar offer del locutor al oyente específico
@@ -195,6 +196,14 @@ io.on('connection', (socket) => {
             candidate: candidate,
             from: socket.id
         });
+    });
+    
+    // Limpiar broadcasterId cuando se desconecta
+    socket.on('disconnect', () => {
+        if (broadcasterId === socket.id) {
+            broadcasterId = null;
+            console.log('🎤 Locutor desconectado');
+        }
     });
 });
 
