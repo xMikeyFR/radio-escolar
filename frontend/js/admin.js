@@ -27,11 +27,26 @@ let state = {
     peerConnections: new Map() // socket.id -> RTCPeerConnection
 };
 
-// CONFIGURACIÓN WebRTC
+// CONFIGURACIÓN WebRTC - TURN necesario para móviles (NATs restrictivos)
 const rtcConfig = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
+        { urls: 'stun:stun1.l.google.com:19302' },
+        {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        },
+        {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        },
+        {
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        }
     ]
 };
 
@@ -145,6 +160,14 @@ async function checkSavedSession() {
         if (response.ok) {
             hideLogin();
             showAdminPanel();
+            // CRÍTICO: Autenticar vía Socket para que broadcaster-ready y get-current-listeners funcionen
+            if (state.socket && state.socket.connected) {
+                state.socket.emit('admin-auth', {
+                    username: 'ADMINISTRADOR',
+                    password: '987654321'
+                });
+                console.log('✅ Sesión restaurada - enviando admin-auth');
+            }
         } else {
             showLogin();
         }
@@ -492,14 +515,10 @@ async function startRecording() {
         // Notificar al servidor que estamos listos
         state.socket.emit('broadcaster-ready');
         
-        // CRÍTICO: Esperar un momento antes de solicitar lista (para que servidor actualice)
-        // Y también solicitar inmediatamente para oyentes ya conectados
-        setTimeout(() => {
-            state.socket.emit('get-current-listeners');
-        }, 200);
-        
-        // También solicitar inmediatamente (para oyentes ya conectados)
+        // CRÍTICO: Solicitar lista varias veces (timing para varios oyentes)
         state.socket.emit('get-current-listeners');
+        setTimeout(() => state.socket.emit('get-current-listeners'), 150);
+        setTimeout(() => state.socket.emit('get-current-listeners'), 400);
         
         state.isRecording = true;
 

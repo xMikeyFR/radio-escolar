@@ -215,6 +215,29 @@ body {
     display: block;
 }
 
+/* Botón Escuchar - solo móvil (necesario para autoplay en iOS/Android) */
+.play-btn {
+    display: none;
+    width: 100%;
+    max-width: 280px;
+    margin: 15px auto;
+    padding: 14px 24px;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 12px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    gap: 8px;
+    align-items: center;
+    justify-content: center;
+}
+.play-btn.visible {
+    display: flex;
+}
+
 /* ================================================
    CONTROLES PRINCIPALES (Mic + Vol)
    ================================================ */

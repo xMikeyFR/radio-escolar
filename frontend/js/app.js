@@ -10,6 +10,12 @@ const SOCKET_URL = window.location.origin;
 // ELEMENTOS DEL DOM
 let elements = {};
 
+// Detectar móvil (iOS, Android) - lógica separada para autoplay
+function isMobile() {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+        || ('ontouchstart' in window && window.innerWidth < 768);
+}
+
 // ESTADO
 let state = {
     currentVolume: 0.75,
@@ -59,7 +65,8 @@ function initializeElements() {
         volumeValue: document.getElementById('volumeValue'),
         muteBtn: document.getElementById('muteBtn'),
         visualizer: document.getElementById('visualizer'),
-        listenersCount: document.getElementById('listenersCount')
+        listenersCount: document.getElementById('listenersCount'),
+        playBtn: document.getElementById('playBtn')
     };
     
     // Crear elemento <audio> para reproducir el stream WebRTC
@@ -83,6 +90,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupListenerVisualizer();
     initializeSocket();
     initializeControls();
+    setupPlayButton();
     loadListeners();
     
     // Marcar interacción del usuario al hacer clic en cualquier parte (desktop)
@@ -136,15 +144,18 @@ function initializeSocket() {
             }
         });
 
-        // WebRTC: Cuando hay un locutor disponible
+        // WebRTC: Cuando hay un locutor disponible (nueva sesión)
         state.socket.on('broadcaster-ready', () => {
             console.log('📡 Locutor disponible, esperando offer...');
-            // CRÍTICO: Si ya hay una conexión pero no hay stream, limpiar y esperar nuevo offer
-            if (state.peerConnection && !state.audioElement.srcObject) {
-                console.log('🔄 Limpiando conexión anterior sin stream...');
+            // CRÍTICO: Siempre limpiar conexión anterior para recibir nuevo offer (varios oyentes / reconexión)
+            if (state.peerConnection) {
                 state.peerConnection.close();
                 state.peerConnection = null;
+                console.log('🔄 Conexión anterior cerrada para nueva sesión');
             }
+            if (state.audioElement) state.audioElement.srcObject = null;
+            state.pendingStream = null;
+            hidePlayButton();
         });
 
         // WebRTC: Recibir offer del locutor
@@ -193,28 +204,26 @@ async function handleOffer(offer, from) {
                 }
                 
                 if (state.audioElement) {
-                    // CRÍTICO: Asignar stream inmediatamente
                     state.audioElement.srcObject = stream;
-                    console.log('✅ Stream asignado a audioElement:', {
-                        hasTracks: stream.getTracks().length,
-                        trackKinds: stream.getTracks().map(t => t.kind)
-                    });
-                    
-                    // Conectar al visualizador inmediatamente (no requiere interacción)
+                    console.log('✅ Stream asignado:', { tracks: stream.getTracks().length });
                     connectStreamToVisualizer(stream);
                     
-                    // CRÍTICO: Intentar reproducir automáticamente después de un breve delay
-                    // Esto ayuda especialmente en móviles
-                    setTimeout(() => {
+                    // LÓGICA SEPARADA: Móvil vs Desktop
+                    if (isMobile()) {
+                        // MÓVIL: play() DEBE ser síncrono con user gesture. Mostrar botón.
+                        state.pendingStream = stream;
+                        showPlayButton();
+                        console.log('📱 Móvil: Toca el botón para escuchar');
+                    } else {
+                        // DESKTOP: intentar reproducción automática (sin setTimeout - pierde user gesture)
                         if (state.userInteracted) {
                             playPendingStream();
                         } else {
-                            // Guardar el stream para reproducirlo cuando el usuario interactúe
                             state.pendingStream = stream;
-                            console.log('⏳ Stream guardado, esperando interacción del usuario...');
-                            console.log('💡 Toca la pantalla o el control de volumen para escuchar');
+                            showPlayButton();
+                            console.log('💡 Toca el botón o cualquier parte para escuchar');
                         }
-                    }, 100);
+                    }
                 }
             };
             
@@ -265,6 +274,17 @@ async function handleOffer(offer, from) {
 // FUNCIONES AUXILIARES PARA AUDIO
 // =============================================
 
+function showPlayButton() {
+    if (elements.playBtn) {
+        elements.playBtn.classList.add('visible');
+    }
+}
+function hidePlayButton() {
+    if (elements.playBtn) {
+        elements.playBtn.classList.remove('visible');
+    }
+}
+
 function playPendingStream() {
     if (!state.audioElement) {
         console.error('❌ audioElement no existe');
@@ -300,7 +320,8 @@ function playPendingStream() {
                     volume: state.audioElement.volume,
                     readyState: state.audioElement.readyState
                 });
-                state.pendingStream = null; // Ya no está pendiente
+                state.pendingStream = null;
+                hidePlayButton();
             })
             .catch(err => {
                 console.error('❌ Error al reproducir audio:', err);
@@ -314,9 +335,10 @@ function playPendingStream() {
                     error: err.message
                 });
                 
-                // Si falla, guardar el stream para intentar más tarde
+                // Si falla, mostrar botón para que el usuario toque (requiere user gesture)
                 if (state.audioElement.srcObject) {
                     state.pendingStream = state.audioElement.srcObject;
+                    showPlayButton();
                 }
             });
     } else {
@@ -407,6 +429,25 @@ function drawVisualizer() {
     }
 
     renderFrame();
+}
+
+// =============================================
+// BOTÓN ESCUCHAR (móvil - play síncrono con user gesture)
+// =============================================
+function setupPlayButton() {
+    if (!elements.playBtn) return;
+    const handlePlay = () => {
+        state.userInteracted = true;
+        if (state.audioContext && state.audioContext.state === 'suspended') {
+            state.audioContext.resume();
+        }
+        playPendingStream();
+    };
+    elements.playBtn.addEventListener('click', handlePlay);
+    elements.playBtn.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        handlePlay();
+    }, { passive: false });
 }
 
 // =============================================
