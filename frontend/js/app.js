@@ -1,6 +1,6 @@
 /**
  * RADIO ESCOLAR FM - Solo Voz
- * Panel para OYENTES - Sin login
+ * Panel para OYENTES - Sin login (WebRTC)
  */
 
 // CONFIGURACIÓN
@@ -18,14 +18,19 @@ let state = {
     // Audio para visualizador (voz recibida)
     audioContext: null,
     analyser: null,
-    // Audio para reproducir voz recibida
-    voiceAudioContext: null,
-    voiceGainNode: null,
-    // Buffer para acumular chunks de audio
-    audioChunks: [],
-    isReceivingAudio: false,
+    // WebRTC
+    peerConnection: null,
+    audioElement: null, // Elemento <audio> para reproducir stream
     // Flag para saber si el usuario ya interactuó
     userInteracted: false
+};
+
+// CONFIGURACIÓN WebRTC
+const rtcConfig = {
+    iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+    ]
 };
 
 // INICIALIZACIÓN
@@ -37,6 +42,14 @@ function initializeElements() {
         visualizer: document.getElementById('visualizer'),
         listenersCount: document.getElementById('listenersCount')
     };
+    
+    // Crear elemento <audio> para reproducir el stream WebRTC
+    state.audioElement = document.createElement('audio');
+    state.audioElement.autoplay = true;
+    state.audioElement.controls = false;
+    state.audioElement.style.display = 'none';
+    state.audioElement.volume = state.currentVolume;
+    document.body.appendChild(state.audioElement);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -53,10 +66,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!state.userInteracted) {
             state.userInteracted = true;
             console.log('✅ Usuario interactuó - AudioContext puede iniciarse');
-            // Inicializar AudioContext si aún no está inicializado
-            if (!state.voiceAudioContext) {
-                initVoiceAudioContext();
-            }
         }
     }, { once: true });
     
@@ -65,9 +74,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!state.userInteracted) {
             state.userInteracted = true;
             console.log('✅ Usuario interactuó - AudioContext puede iniciarse');
-            if (!state.voiceAudioContext) {
-                initVoiceAudioContext();
-            }
         }
     }, { once: true });
 });
@@ -90,23 +96,106 @@ function initializeSocket() {
             }
         });
 
-        state.socket.on('voice-start', () => {
-            console.log('📡 Recibido voice-start');
-            handleVoiceStart();
+        // WebRTC: Recibir offer del locutor
+        state.socket.on('webrtc-offer', async (data) => {
+            const { offer, from } = data;
+            console.log('📡 Recibido offer del locutor:', from);
+            await handleOffer(offer, from);
         });
 
-        state.socket.on('voice-data', (data) => {
-            console.log('📡 Recibido voice-data, tamaño:', data.audio ? data.audio.length : 0);
-            handleVoiceData(data);
-        });
-
-        state.socket.on('voice-end', () => {
-            console.log('📡 Recibido voice-end');
-            handleVoiceEnd();
+        // WebRTC: Recibir ICE candidate del locutor
+        state.socket.on('webrtc-ice-candidate', async (data) => {
+            const { candidate, from } = data;
+            if (state.peerConnection) {
+                try {
+                    await state.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                    console.log('✅ ICE candidate agregado');
+                } catch (error) {
+                    console.error('❌ Error al agregar ICE candidate:', error);
+                }
+            }
         });
 
     } catch (error) {
         console.error('Error Socket.io:', error);
+    }
+}
+
+// =============================================
+// WebRTC - MANEJAR OFFER Y CREAR ANSWER
+// =============================================
+
+async function handleOffer(offer, from) {
+    try {
+        // Crear RTCPeerConnection si no existe
+        if (!state.peerConnection) {
+            state.peerConnection = new RTCPeerConnection(rtcConfig);
+            
+            // Cuando recibimos el stream, asignarlo al elemento <audio>
+            state.peerConnection.ontrack = (event) => {
+                console.log('🎵 Stream recibido del locutor');
+                const stream = event.streams[0];
+                
+                if (state.audioElement) {
+                    state.audioElement.srcObject = stream;
+                    state.audioElement.play().catch(err => {
+                        console.warn('⚠️ Error al reproducir:', err);
+                    });
+                    
+                    // Conectar al visualizador
+                    if (state.audioContext && state.analyser) {
+                        try {
+                            const source = state.audioContext.createMediaStreamSource(stream);
+                            source.connect(state.analyser);
+                            state.analyser.connect(state.audioContext.destination);
+                            console.log('✅ Stream conectado al visualizador');
+                        } catch (e) {
+                            console.warn('⚠️ No se pudo conectar al visualizador:', e);
+                        }
+                    }
+                }
+            };
+            
+            // Manejar ICE candidates
+            state.peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    state.socket.emit('webrtc-ice-candidate', {
+                        candidate: event.candidate,
+                        to: from
+                    });
+                }
+            };
+            
+            // Manejar cambios de conexión
+            state.peerConnection.onconnectionstatechange = () => {
+                console.log('📡 Estado conexión:', state.peerConnection.connectionState);
+                if (state.peerConnection.connectionState === 'failed' || 
+                    state.peerConnection.connectionState === 'disconnected') {
+                    state.peerConnection.close();
+                    state.peerConnection = null;
+                    if (state.audioElement) {
+                        state.audioElement.srcObject = null;
+                    }
+                }
+            };
+        }
+        
+        // Configurar offer remoto
+        await state.peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+        
+        // Crear y enviar answer
+        const answer = await state.peerConnection.createAnswer();
+        await state.peerConnection.setLocalDescription(answer);
+        
+        state.socket.emit('webrtc-answer', {
+            answer: answer,
+            to: from
+        });
+        
+        console.log('✅ Answer creado y enviado');
+        
+    } catch (error) {
+        console.error('❌ Error al manejar offer:', error);
     }
 }
 
@@ -197,8 +286,8 @@ function handleVolumeChange(e) {
     }
     updateVolumeIcon(volume);
 
-    if (state.voiceGainNode) {
-        state.voiceGainNode.gain.value = volume;
+    if (state.audioElement) {
+        state.audioElement.volume = volume;
     }
 
     if (volume > 0) {
@@ -210,8 +299,8 @@ function toggleMute() {
     state.isMuted = !state.isMuted;
 
     if (state.isMuted) {
-        if (state.voiceGainNode) {
-            state.voiceGainNode.gain.value = 0;
+        if (state.audioElement) {
+            state.audioElement.volume = 0;
         }
         if (elements.volumeSlider) {
             elements.volumeSlider.value = 0;
@@ -220,8 +309,8 @@ function toggleMute() {
             elements.volumeValue.textContent = '0%';
         }
     } else {
-        if (state.voiceGainNode) {
-            state.voiceGainNode.gain.value = state.currentVolume;
+        if (state.audioElement) {
+            state.audioElement.volume = state.currentVolume;
         }
         if (elements.volumeSlider) {
             elements.volumeSlider.value = state.currentVolume * 100;
@@ -250,139 +339,6 @@ function updateVolumeIcon(volume) {
     } else {
         icon.classList.add('fa-volume-high');
     }
-}
-
-// =============================================
-// REPRODUCCIÓN DE VOZ (OYENTES) - MÉTODO SIMPLIFICADO
-// =============================================
-
-function initVoiceAudioContext() {
-    if (state.voiceAudioContext) return;
-    
-    try {
-        state.voiceAudioContext = new (window.AudioContext || window.webkitAudioContext)();
-        state.voiceGainNode = state.voiceAudioContext.createGain();
-        state.voiceGainNode.gain.value = state.currentVolume;
-        state.voiceGainNode.connect(state.voiceAudioContext.destination);
-        console.log('✅ voiceAudioContext inicializado');
-    } catch (e) {
-        console.error('❌ Error al inicializar voiceAudioContext:', e);
-    }
-}
-
-function handleVoiceStart() {
-    console.log('👂 Alguien está hablando - Iniciando reproducción');
-    
-    // Asegurar que el usuario haya interactuado
-    if (!state.userInteracted) {
-        console.warn('⚠️ Usuario no ha interactuado aún, esperando interacción...');
-        return;
-    }
-    
-    // Inicializar AudioContext para oyentes
-    if (!state.voiceAudioContext) {
-        initVoiceAudioContext();
-    }
-
-    if (state.voiceAudioContext && state.voiceAudioContext.state === 'suspended') {
-        state.voiceAudioContext.resume().catch(err => {
-            console.warn('⚠️ No se pudo reanudar AudioContext:', err);
-        });
-    }
-    
-    // Limpiar buffer y empezar a recibir
-    state.audioChunks = [];
-    state.isReceivingAudio = true;
-    
-    console.log('✅ Estado de recepción activado:', {
-        hasContext: !!state.voiceAudioContext,
-        isReceiving: state.isReceivingAudio,
-        contextState: state.voiceAudioContext ? state.voiceAudioContext.state : 'null',
-        userInteracted: state.userInteracted
-    });
-}
-
-async function handleVoiceData(data) {
-    // Verificar interacción del usuario primero
-    if (!state.userInteracted) {
-        console.warn('⚠️ Esperando interacción del usuario para reproducir audio');
-        return;
-    }
-    
-    // Si no hay contexto o no está recibiendo, inicializar automáticamente
-    if (!state.voiceAudioContext || !state.isReceivingAudio) {
-        console.log('⚠️ Contexto no inicializado o no está recibiendo, inicializando ahora...');
-        handleVoiceStart();
-    }
-    
-    if (!data.audio) {
-        console.warn('⚠️ No hay datos de audio en el chunk');
-        return;
-    }
-    
-    if (!state.voiceAudioContext) {
-        console.error('❌ No se pudo inicializar voiceAudioContext');
-        return;
-    }
-    
-    if (!state.isReceivingAudio) {
-        console.warn('⚠️ isReceivingAudio es false, activando...');
-        state.isReceivingAudio = true;
-    }
-
-    try {
-        if (state.voiceAudioContext.state === 'suspended') {
-            await state.voiceAudioContext.resume();
-        }
-
-        // Agregar chunk al buffer acumulado
-        const chunk = new Uint8Array(data.audio);
-        state.audioChunks.push(chunk);
-        
-        // Crear blob con TODOS los chunks acumulados (necesario para WebM válido)
-        const audioBlob = new Blob(state.audioChunks, { 
-            type: data.mimeType || 'audio/webm;codecs=opus' 
-        });
-        
-        // Intentar decodificar y reproducir usando Web Audio API
-        try {
-            const arrayBuffer = await audioBlob.arrayBuffer();
-            const audioBuffer = await state.voiceAudioContext.decodeAudioData(arrayBuffer);
-            const source = state.voiceAudioContext.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(state.voiceGainNode);
-            source.start(0);
-            
-            // Conectar al visualizador también
-            if (state.audioContext && state.analyser) {
-                const analyserGain = state.voiceAudioContext.createGain();
-                source.connect(analyserGain);
-                analyserGain.connect(state.analyser);
-            }
-            
-            source.onended = () => {
-                source.disconnect();
-            };
-            
-            console.log('✅ Audio reproducido correctamente');
-        } catch (decodeError) {
-            // Si falla decodeAudioData, los chunks aún no forman un WebM válido
-            // Esto es normal, solo loguear sin error
-            if (decodeError.name !== 'EncodingError') {
-                console.log('⏳ Esperando más chunks para formar WebM válido...');
-            }
-        }
-
-    } catch (error) {
-        console.warn('⚠️ Error al reproducir audio:', error);
-    }
-}
-
-function handleVoiceEnd() {
-    console.log('👂 Nadie está hablando - Deteniendo reproducción');
-    
-    state.isReceivingAudio = false;
-    state.audioChunks = [];
 }
 
 // =============================================

@@ -147,33 +147,54 @@ io.on('connection', (socket) => {
     });
 
     // ===================================
-    // TRANSMISIÓN DE VOZ (MICROFONO)
-    // Solo permitir si es admin
+    // WebRTC SIGNALING
     // ===================================
-    socket.on('voice-start', () => {
-        // Verificar si es admin
+    
+    // Cuando el locutor está listo para transmitir
+    socket.on('broadcaster-ready', () => {
         if (adminSessions.has(socket.id)) {
-            console.log(`🎤 Admin inició transmisión: ${socket.id}`);
-            socket.broadcast.emit('voice-start');
-        } else {
-            console.warn(`⚠️ Intento de transmisión sin permisos: ${socket.id}`);
-            socket.emit('error', { message: 'No tienes permisos para transmitir' });
+            console.log(`🎤 Locutor listo para transmitir: ${socket.id}`);
+            // Notificar a todos los oyentes que hay un locutor disponible
+            socket.broadcast.emit('new-listener', socket.id);
         }
     });
-
-    socket.on('voice-data', (data) => {
-        // Solo retransmitir si es admin
+    
+    // Cuando un nuevo oyente se conecta y hay un locutor activo
+    // Notificar al locutor sobre el nuevo oyente
+    const adminSocketId = Array.from(adminSessions.keys())[0];
+    if (adminSocketId) {
+        io.to(adminSocketId).emit('new-listener', socket.id);
+    }
+    
+    // Reenviar offer del locutor al oyente específico
+    socket.on('webrtc-offer', (data) => {
+        const { offer, to } = data;
         if (adminSessions.has(socket.id)) {
-            socket.broadcast.emit('voice-data', data);
+            io.to(to).emit('webrtc-offer', {
+                offer: offer,
+                from: socket.id
+            });
+            console.log(`📤 Offer enviado de ${socket.id} a ${to}`);
         }
     });
-
-    socket.on('voice-end', () => {
-        // Solo procesar si es admin
-        if (adminSessions.has(socket.id)) {
-            console.log(`🎤 Admin terminó transmisión: ${socket.id}`);
-            socket.broadcast.emit('voice-end');
-        }
+    
+    // Reenviar answer del oyente al locutor
+    socket.on('webrtc-answer', (data) => {
+        const { answer, to } = data;
+        io.to(to).emit('webrtc-answer', {
+            answer: answer,
+            from: socket.id
+        });
+        console.log(`📤 Answer enviado de ${socket.id} a ${to}`);
+    });
+    
+    // Reenviar ICE candidates
+    socket.on('webrtc-ice-candidate', (data) => {
+        const { candidate, to } = data;
+        io.to(to).emit('webrtc-ice-candidate', {
+            candidate: candidate,
+            from: socket.id
+        });
     });
 });
 
