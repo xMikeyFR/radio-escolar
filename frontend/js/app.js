@@ -21,9 +21,9 @@ let state = {
     // Audio para reproducir voz recibida
     voiceAudioContext: null,
     voiceGainNode: null,
-    voiceStreamSource: null,
-    // Buffer para audio
-    audioQueue: []
+    // Buffer para acumular chunks de audio
+    audioChunks: [],
+    isReceivingAudio: false
 };
 
 // INICIALIZACIÓN
@@ -225,6 +225,7 @@ function updateVolumeIcon(volume) {
 function handleVoiceStart() {
     console.log('👂 Alguien está hablando');
     
+    // Inicializar AudioContext para oyentes
     if (!state.voiceAudioContext) {
         state.voiceAudioContext = new (window.AudioContext || window.webkitAudioContext)();
         state.voiceGainNode = state.voiceAudioContext.createGain();
@@ -238,73 +239,83 @@ function handleVoiceStart() {
         });
     }
     
-    state.audioQueue = [];
+    // Limpiar buffer y empezar a recibir
+    state.audioChunks = [];
+    state.isReceivingAudio = true;
 }
 
 async function handleVoiceData(data) {
-    if (!data.audio || !state.voiceAudioContext) return;
+    if (!data.audio || !state.voiceAudioContext || !state.isReceivingAudio) {
+        return;
+    }
 
     try {
         if (state.voiceAudioContext.state === 'suspended') {
             await state.voiceAudioContext.resume();
         }
 
-        const audioData = new Uint8Array(data.audio);
-        const audioBlob = new Blob([audioData], { 
+        // Agregar chunk al buffer
+        const chunk = new Uint8Array(data.audio);
+        state.audioChunks.push(chunk);
+        
+        // Crear blob con todos los chunks acumulados
+        const audioBlob = new Blob(state.audioChunks, { 
             type: data.mimeType || 'audio/webm;codecs=opus' 
         });
         
-        // Método 1: Web Audio API (más confiable)
+        // Intentar reproducir usando Audio Element (más confiable para WebM chunks)
+        const blobUrl = URL.createObjectURL(audioBlob);
+        const audioElement = new Audio(blobUrl);
+        audioElement.volume = state.currentVolume;
+        
+        // Conectar al visualizador
+        if (state.audioContext && state.analyser && !state.voiceStreamSource) {
+            try {
+                const source = state.audioContext.createMediaElementSource(audioElement);
+                source.connect(state.analyser);
+                state.analyser.connect(state.audioContext.destination);
+                state.voiceStreamSource = source;
+            } catch (e) {
+                // Si ya hay una conexión, ignorar
+                console.log('Conexión de visualizador ya existe');
+            }
+        }
+        
+        // Reproducir
+        const playPromise = audioElement.play();
+        if (playPromise !== undefined) {
+            playPromise.catch(err => {
+                console.warn('⚠️ Error al reproducir audio:', err);
+            });
+        }
+        
+        // Limpiar URL después de reproducir
+        audioElement.addEventListener('ended', () => {
+            URL.revokeObjectURL(blobUrl);
+        });
+        
+        // También intentar con Web Audio API como método alternativo
         try {
             const arrayBuffer = await audioBlob.arrayBuffer();
             const audioBuffer = await state.voiceAudioContext.decodeAudioData(arrayBuffer);
             const source = state.voiceAudioContext.createBufferSource();
             source.buffer = audioBuffer;
-            
-            // Conectar al gain node para reproducir
             source.connect(state.voiceGainNode);
+            source.start(0);
             
-            // Conectar también al visualizador si está disponible
+            // Conectar al visualizador también
             if (state.audioContext && state.analyser) {
-                // Crear un gain node intermedio para el visualizador
                 const analyserGain = state.voiceAudioContext.createGain();
                 source.connect(analyserGain);
                 analyserGain.connect(state.analyser);
             }
             
-            source.start(0);
-            
             source.onended = () => {
                 source.disconnect();
             };
         } catch (decodeError) {
-            // Método 2: Audio Element (fallback)
-            const blobUrl = URL.createObjectURL(audioBlob);
-            const audioElement = new Audio(blobUrl);
-            audioElement.volume = state.currentVolume;
-            
-            // Conectar al visualizador usando MediaElementSource
-            if (state.audioContext && state.analyser) {
-                try {
-                    // Solo crear una conexión si no existe ya
-                    if (!state.voiceStreamSource) {
-                        const source = state.audioContext.createMediaElementSource(audioElement);
-                        source.connect(state.analyser);
-                        state.analyser.connect(state.audioContext.destination);
-                        state.voiceStreamSource = source;
-                    }
-                } catch (e) {
-                    // Si falla (ya hay conexión), solo reproducir
-                }
-            }
-            
-            audioElement.play().catch(err => {
-                console.warn('⚠️ Error al reproducir:', err);
-            });
-            
-            audioElement.addEventListener('ended', () => {
-                URL.revokeObjectURL(blobUrl);
-            });
+            // Si falla decodeAudioData, usar solo el método del Audio Element
+            console.log('Usando método Audio Element para reproducción');
         }
 
     } catch (error) {
@@ -314,7 +325,9 @@ async function handleVoiceData(data) {
 
 function handleVoiceEnd() {
     console.log('👂 Nadie está hablando');
-    state.audioQueue = [];
+    
+    state.isReceivingAudio = false;
+    state.audioChunks = [];
     
     // Limpiar conexión del visualizador
     if (state.voiceStreamSource) {
@@ -322,7 +335,7 @@ function handleVoiceEnd() {
             state.voiceStreamSource.disconnect();
             state.voiceStreamSource = null;
         } catch (e) {
-            // Ignorar errores de desconexión
+            // Ignorar errores
         }
     }
 }
@@ -343,4 +356,4 @@ async function loadListeners() {
     }
 }
 
-console.log('✅ Radio Escolar FM - Panel de Oyentes cargado');
+console.log(' Radio Escolar FM - Panel de Oyentes cargado');
