@@ -217,6 +217,18 @@ function initializeSocket() {
             }
         });
 
+        // WebRTC: Recibir lista de oyentes actuales
+        state.socket.on('current-listeners', (listenerIds) => {
+            console.log('👂 Oyentes actuales recibidos:', listenerIds);
+            if (state.isRecording && state.mediaStream && Array.isArray(listenerIds)) {
+                listenerIds.forEach(listenerId => {
+                    if (listenerId !== state.socket.id) {
+                        createPeerConnection(listenerId);
+                    }
+                });
+            }
+        });
+
         // WebRTC: Recibir answer del oyente
         state.socket.on('webrtc-answer', async (data) => {
             const { answer, from } = data;
@@ -377,6 +389,12 @@ function updateVolumeIcon(volume) {
 // =============================================
 
 async function createPeerConnection(listenerId) {
+    // Evitar crear conexión duplicada
+    if (state.peerConnections.has(listenerId)) {
+        console.log('⚠️ Ya existe conexión con oyente:', listenerId);
+        return;
+    }
+    
     try {
         const pc = new RTCPeerConnection(rtcConfig);
         
@@ -386,6 +404,9 @@ async function createPeerConnection(listenerId) {
                 pc.addTrack(track, state.mediaStream);
                 console.log('✅ Track agregado a RTCPeerConnection:', track.kind);
             });
+        } else {
+            console.error('❌ No hay mediaStream disponible para crear conexión');
+            return;
         }
         
         // Manejar ICE candidates
@@ -453,9 +474,11 @@ async function startRecording() {
             state.microphoneSource.connect(state.analyser);
         }
 
-        // Crear conexiones WebRTC con todos los oyentes actuales
-        // El servidor nos notificará cuando haya nuevos oyentes
+        // Notificar al servidor que estamos listos
         state.socket.emit('broadcaster-ready');
+        
+        // Solicitar lista de oyentes actuales para crear conexiones
+        state.socket.emit('get-current-listeners');
         
         state.isRecording = true;
 

@@ -162,6 +162,15 @@ io.on('connection', (socket) => {
         }
     }, 100);
     
+    // Enviar lista de oyentes actuales cuando el locutor lo solicita
+    socket.on('get-current-listeners', () => {
+        if (adminSessions.has(socket.id)) {
+            const currentListeners = Array.from(listeners).filter(id => id !== socket.id);
+            socket.emit('current-listeners', currentListeners);
+            console.log(`📋 Enviando lista de ${currentListeners.length} oyentes al locutor`);
+        }
+    });
+    
     // Reenviar offer del locutor al oyente específico
     socket.on('webrtc-offer', (data) => {
         const { offer, to } = data;
