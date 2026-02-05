@@ -139,14 +139,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Cuando el oyente se desconecta
-    socket.on('disconnect', () => {
-        listeners.delete(socket.id);
-        adminSessions.delete(socket.id);
-        console.log(`👋 Oyente desconectado: ${socket.id} | Total: ${listeners.size}`);
-        io.emit('listeners-update', { count: listeners.size });
-    });
-
     // ===================================
     // WebRTC SIGNALING
     // ===================================
@@ -162,10 +154,13 @@ io.on('connection', (socket) => {
     });
     
     // Cuando un nuevo oyente se conecta y hay un locutor activo, notificar al locutor
-    if (broadcasterId && !adminSessions.has(socket.id)) {
-        io.to(broadcasterId).emit('new-listener', socket.id);
-        console.log(`👂 Notificando locutor sobre nuevo oyente: ${socket.id}`);
-    }
+    // Esto se ejecuta después de que el socket se conecta
+    setTimeout(() => {
+        if (broadcasterId && !adminSessions.has(socket.id)) {
+            io.to(broadcasterId).emit('new-listener', socket.id);
+            console.log(`👂 Notificando locutor sobre nuevo oyente: ${socket.id}`);
+        }
+    }, 100);
     
     // Reenviar offer del locutor al oyente específico
     socket.on('webrtc-offer', (data) => {
@@ -197,13 +192,20 @@ io.on('connection', (socket) => {
             from: socket.id
         });
     });
-    
-    // Limpiar broadcasterId cuando se desconecta
+
+    // Cuando el oyente se desconecta
     socket.on('disconnect', () => {
+        listeners.delete(socket.id);
+        adminSessions.delete(socket.id);
+        
+        // Limpiar broadcasterId si era el locutor
         if (broadcasterId === socket.id) {
             broadcasterId = null;
             console.log('🎤 Locutor desconectado');
         }
+        
+        console.log(`👋 Oyente desconectado: ${socket.id} | Total: ${listeners.size}`);
+        io.emit('listeners-update', { count: listeners.size });
     });
 });
 
