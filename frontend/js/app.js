@@ -277,19 +277,25 @@ function handleVoiceStart() {
 }
 
 async function handleVoiceData(data) {
-    // Si no hay contexto o no está recibiendo, inicializar
-    if (!state.voiceAudioContext) {
-        console.log('⚠️ Contexto no inicializado, inicializando ahora...');
+    // Si no hay contexto o no está recibiendo, inicializar automáticamente
+    if (!state.voiceAudioContext || !state.isReceivingAudio) {
+        console.log('⚠️ Contexto no inicializado o no está recibiendo, inicializando ahora...');
         handleVoiceStart();
     }
     
-    if (!data.audio || !state.voiceAudioContext || !state.isReceivingAudio) {
-        console.warn('⚠️ No se puede procesar audio:', {
-            hasAudio: !!data.audio,
-            hasContext: !!state.voiceAudioContext,
-            isReceiving: state.isReceivingAudio
-        });
+    if (!data.audio) {
+        console.warn('⚠️ No hay datos de audio en el chunk');
         return;
+    }
+    
+    if (!state.voiceAudioContext) {
+        console.error('❌ No se pudo inicializar voiceAudioContext');
+        return;
+    }
+    
+    if (!state.isReceivingAudio) {
+        console.warn('⚠️ isReceivingAudio es false, activando...');
+        state.isReceivingAudio = true;
     }
 
     try {
