@@ -1,200 +1,51 @@
 /**
  * RADIO ESCOLAR FM - Solo Voz
- * Sistema simplificado: solo transmisión de voz del administrador
+ * Panel para OYENTES - Sin login
  */
 
 // CONFIGURACIÓN
 const API_BASE_URL = window.location.origin;
 const SOCKET_URL = window.location.origin;
 
-// ELEMENTOS DEL DOM (se inicializarán cuando el DOM esté listo)
+// ELEMENTOS DEL DOM
 let elements = {};
 
 // ESTADO
 let state = {
-    isAdmin: false,
     currentVolume: 0.75,
     isMuted: false,
     socket: null,
-    // Audio para visualizador (admin: micrófono, oyente: voz recibida)
+    // Audio para visualizador (voz recibida)
     audioContext: null,
     analyser: null,
-    microphoneSource: null,
-    // Audio para reproducir voz recibida (oyentes)
+    // Audio para reproducir voz recibida
     voiceAudioContext: null,
     voiceGainNode: null,
-    voiceStreamSource: null, // MediaStreamSource para reproducir audio
-    // Micrófono (solo admin)
-    mediaStream: null,
-    mediaRecorder: null,
-    isRecording: false,
-    // Buffer para audio de oyentes
+    voiceStreamSource: null,
+    // Buffer para audio
     audioQueue: []
 };
 
 // INICIALIZACIÓN
 function initializeElements() {
     elements = {
-        // Login
-        loginModal: document.getElementById('loginModal'),
-        loginForm: document.getElementById('loginForm'),
-        guestBtn: document.getElementById('guestBtn'),
-        loginError: document.getElementById('loginError'),
-        mainContainer: document.getElementById('mainContainer'),
-        logoutBtn: document.getElementById('logoutBtn'),
-        // Controles
         volumeSlider: document.getElementById('volumeSlider'),
         volumeValue: document.getElementById('volumeValue'),
         muteBtn: document.getElementById('muteBtn'),
-        micBtn: document.getElementById('micBtn'),
         visualizer: document.getElementById('visualizer'),
         listenersCount: document.getElementById('listenersCount')
     };
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🎙️ Radio Escolar FM - Solo Voz - Iniciando...');
+    console.log('🎙️ Radio Escolar FM - Panel de Oyentes');
     
-    // Inicializar elementos del DOM
     initializeElements();
-    
-    // Configurar eventos de login
-    if (elements.loginForm) {
-        elements.loginForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-
-            try {
-                const response = await fetch(`${API_BASE_URL}/api/login`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password })
-                });
-
-                const data = await response.json();
-
-                if (data.success) {
-                    state.isAdmin = true;
-                    localStorage.setItem('radioAdminSession', 'true');
-                    hideLogin();
-                    showAdminControls();
-                    // Autenticar también en Socket.io
-                    if (state.socket && state.socket.connected) {
-                        state.socket.emit('admin-auth', { username, password });
-                    }
-                    if (elements.loginError) {
-                        elements.loginError.classList.add('hidden');
-                    }
-                } else {
-                    showLoginError('Credenciales incorrectas');
-                }
-            } catch (error) {
-                showLoginError('Error al conectar con el servidor');
-            }
-        });
-    }
-
-    if (elements.guestBtn) {
-        elements.guestBtn.addEventListener('click', () => {
-            state.isAdmin = false;
-            localStorage.removeItem('radioAdminSession');
-            hideLogin();
-            showAdminControls();
-        });
-    }
-
-    if (elements.logoutBtn) {
-        elements.logoutBtn.addEventListener('click', () => {
-            state.isAdmin = false;
-            localStorage.removeItem('radioAdminSession');
-            if (state.socket && state.socket.connected) {
-                stopRecording();
-            }
-            showLogin();
-            showAdminControls();
-        });
-    }
-    
-    // Verificar si hay sesión guardada
-    const savedSession = localStorage.getItem('radioAdminSession');
-    if (savedSession === 'true') {
-        // Hay sesión guardada (admin), verificar y mostrar panel
-        checkSavedSession();
-    } else {
-        // NO HAY SESIÓN - OYENTE: ir directo al panel SIN mostrar login
-        hideLogin();
-        showAdminControls();
-    }
-
+    setupListenerVisualizer();
     initializeSocket();
     initializeControls();
     loadListeners();
 });
-
-// =============================================
-// SISTEMA DE LOGIN
-// =============================================
-
-function showLogin() {
-    if (elements.loginModal) {
-        elements.loginModal.style.display = 'flex';
-    }
-    if (elements.mainContainer) {
-        elements.mainContainer.style.display = 'none';
-    }
-}
-
-function hideLogin() {
-    if (elements.loginModal) {
-        elements.loginModal.style.display = 'none';
-    }
-    if (elements.mainContainer) {
-        elements.mainContainer.style.display = 'block';
-    }
-}
-
-async function checkSavedSession() {
-    // Verificar si la sesión sigue siendo válida
-    try {
-        const response = await fetch(`${API_BASE_URL}/api/info`);
-        if (response.ok) {
-            // Si el servidor responde, intentar autenticar vía socket
-            hideLogin();
-            // La autenticación real se hará cuando se conecte el socket
-        } else {
-            showLogin();
-        }
-    } catch (error) {
-        showLogin();
-    }
-}
-
-function showLoginError(message) {
-    if (elements.loginError) {
-        elements.loginError.textContent = message;
-        elements.loginError.classList.remove('hidden');
-    }
-}
-
-function showAdminControls() {
-    if (state.isAdmin) {
-        if (elements.micBtn) elements.micBtn.classList.remove('hidden');
-        if (elements.logoutBtn) elements.logoutBtn.classList.remove('hidden');
-        // Visualizador para admin (micrófono)
-        if (!state.audioContext) {
-            setupVisualizer();
-        }
-    } else {
-        // OYENTE: Configurar visualizador para voz recibida
-        if (elements.micBtn) elements.micBtn.classList.add('hidden');
-        if (elements.logoutBtn) elements.logoutBtn.classList.add('hidden');
-        // Visualizador para oyente (voz recibida) - INICIALIZAR SIEMPRE
-        if (!state.audioContext) {
-            setupListenerVisualizer();
-        }
-    }
-}
 
 // =============================================
 // SOCKET.IO - TIEMPO REAL
@@ -206,28 +57,6 @@ function initializeSocket() {
 
         state.socket.on('connect', () => {
             console.log('✅ Conectado al servidor');
-            
-            if (state.isAdmin) {
-                const savedSession = localStorage.getItem('radioAdminSession');
-                if (savedSession === 'true') {
-                    state.socket.emit('admin-auth', {
-                        username: 'ADMINISTRADOR',
-                        password: '987654321'
-                    });
-                }
-            }
-        });
-
-        state.socket.on('admin-authenticated', (data) => {
-            if (data.success) {
-                state.isAdmin = true;
-                showAdminControls();
-                console.log('✅ Autenticado como administrador');
-            } else {
-                state.isAdmin = false;
-                localStorage.removeItem('radioAdminSession');
-                showAdminControls();
-            }
         });
 
         state.socket.on('listeners-update', (data) => {
@@ -248,43 +77,22 @@ function initializeSocket() {
             handleVoiceEnd();
         });
 
-        state.socket.on('error', (data) => {
-            console.warn('⚠️ Error del servidor:', data.message);
-        });
-
     } catch (error) {
         console.error('Error Socket.io:', error);
     }
 }
 
 // =============================================
-// VISUALIZADOR
+// VISUALIZADOR PARA OYENTES
 // =============================================
 
-// Visualizador para ADMIN (micrófono)
-function setupVisualizer() {
-    if (!state.isAdmin || !elements.visualizer) return;
-
-    try {
-        state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        state.analyser = state.audioContext.createAnalyser();
-        state.analyser.fftSize = 128;
-        drawVisualizer();
-    } catch (e) {
-        console.log("AudioContext no soportado:", e);
-    }
-}
-
-// Visualizador para OYENTE (voz recibida) - SIEMPRE INICIALIZAR
 function setupListenerVisualizer() {
-    if (state.isAdmin || !elements.visualizer) return;
+    if (!elements.visualizer) return;
 
     try {
         state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
         state.analyser = state.audioContext.createAnalyser();
         state.analyser.fftSize = 128;
-        
-        // El visualizador se conectará cuando llegue audio de voz
         drawVisualizer();
     } catch (e) {
         console.log("AudioContext no soportado:", e);
@@ -343,20 +151,6 @@ function initializeControls() {
     }
     if (elements.muteBtn) {
         elements.muteBtn.addEventListener('click', toggleMute);
-    }
-
-    if (elements.micBtn) {
-        elements.micBtn.addEventListener('mousedown', startRecording);
-        elements.micBtn.addEventListener('mouseup', stopRecording);
-        elements.micBtn.addEventListener('mouseleave', stopRecording);
-        elements.micBtn.addEventListener('touchstart', (e) => {
-            e.preventDefault();
-            startRecording();
-        });
-        elements.micBtn.addEventListener('touchend', (e) => {
-            e.preventDefault();
-            stopRecording();
-        });
     }
 }
 
@@ -424,122 +218,12 @@ function updateVolumeIcon(volume) {
 }
 
 // =============================================
-// FUNCIONALIDAD DE MICRÓFONO (SOLO ADMIN)
-// =============================================
-
-async function startRecording() {
-    if (!state.isAdmin || state.isRecording) return;
-
-    try {
-        state.mediaStream = await navigator.mediaDevices.getUserMedia({ 
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true
-            } 
-        });
-
-        if (!state.audioContext) {
-            setupVisualizer();
-        }
-
-        if (state.audioContext && !state.microphoneSource) {
-            state.microphoneSource = state.audioContext.createMediaStreamSource(state.mediaStream);
-            state.microphoneSource.connect(state.analyser);
-        }
-
-        const options = {
-            mimeType: 'audio/webm;codecs=opus'
-        };
-        
-        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-            options.mimeType = 'audio/webm';
-            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                options.mimeType = '';
-            }
-        }
-
-        state.mediaRecorder = new MediaRecorder(state.mediaStream, options);
-
-        state.mediaRecorder.ondataavailable = (event) => {
-            if (event.data.size > 0 && state.socket && state.socket.connected) {
-                const reader = new FileReader();
-                reader.onloadend = () => {
-                    state.socket.emit('voice-data', {
-                        audio: Array.from(new Uint8Array(reader.result)),
-                        mimeType: event.data.type
-                    });
-                };
-                reader.readAsArrayBuffer(event.data);
-            }
-        };
-
-        state.mediaRecorder.start(100);
-        state.isRecording = true;
-
-        if (elements.micBtn) {
-            elements.micBtn.classList.add('active');
-        }
-
-        if (state.socket && state.socket.connected) {
-            state.socket.emit('voice-start');
-        }
-
-        console.log('🎤 Grabación iniciada');
-
-    } catch (error) {
-        console.warn('⚠️ Error al acceder al micrófono:', error.message);
-        state.isRecording = false;
-        if (elements.micBtn) {
-            elements.micBtn.classList.remove('active');
-        }
-    }
-}
-
-function stopRecording() {
-    if (!state.isRecording) return;
-
-    try {
-        if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
-            state.mediaRecorder.stop();
-        }
-
-        if (state.mediaStream) {
-            state.mediaStream.getTracks().forEach(track => track.stop());
-            state.mediaStream = null;
-        }
-
-        if (state.microphoneSource) {
-            state.microphoneSource.disconnect();
-            state.microphoneSource = null;
-        }
-
-        state.mediaRecorder = null;
-        state.isRecording = false;
-
-        if (elements.micBtn) {
-            elements.micBtn.classList.remove('active');
-        }
-
-        if (state.socket && state.socket.connected) {
-            state.socket.emit('voice-end');
-        }
-
-        console.log('🎤 Grabación detenida');
-
-    } catch (error) {
-        console.warn('⚠️ Error al detener la grabación:', error);
-    }
-}
-
-// =============================================
-// REPRODUCCIÓN DE VOZ (OYENTES) - MÉTODO SIMPLE Y FUNCIONAL
+// REPRODUCCIÓN DE VOZ (OYENTES)
 // =============================================
 
 function handleVoiceStart() {
     console.log('👂 Alguien está hablando');
     
-    // Inicializar AudioContext para oyentes
     if (!state.voiceAudioContext) {
         state.voiceAudioContext = new (window.AudioContext || window.webkitAudioContext)();
         state.voiceGainNode = state.voiceAudioContext.createGain();
@@ -553,108 +237,75 @@ function handleVoiceStart() {
         });
     }
     
-    // Limpiar cola de audio
     state.audioQueue = [];
-    
-    // Configurar visualizador para oyente si aún no está configurado
-    if (!state.isAdmin && !state.audioContext) {
-        setupListenerVisualizer();
-    }
 }
 
 async function handleVoiceData(data) {
-    if (!data.audio || !state.voiceAudioContext) {
-        console.warn('⚠️ No hay audio o AudioContext');
-        return;
-    }
+    if (!data.audio || !state.voiceAudioContext) return;
 
     try {
         if (state.voiceAudioContext.state === 'suspended') {
             await state.voiceAudioContext.resume();
         }
 
-        // Convertir array a Uint8Array
         const audioData = new Uint8Array(data.audio);
-        
-        // Crear blob con el chunk
         const audioBlob = new Blob([audioData], { 
             type: data.mimeType || 'audio/webm;codecs=opus' 
         });
         
-        // Crear URL del blob
-        const blobUrl = URL.createObjectURL(audioBlob);
-        
-        // Crear elemento Audio y reproducir
-        const audioElement = new Audio(blobUrl);
-        audioElement.volume = state.currentVolume;
-        
-        // Conectar al visualizador si es oyente
-        if (!state.isAdmin && state.audioContext && state.analyser) {
-            try {
-                // Si ya hay una conexión, no crear otra
-                if (!state.voiceStreamSource) {
-                    const mediaStream = state.voiceAudioContext.createMediaStreamDestination();
-                    state.voiceStreamSource = state.audioContext.createMediaStreamSource(mediaStream.stream);
-                    state.voiceStreamSource.connect(state.analyser);
+        // Método 1: Web Audio API (más confiable)
+        try {
+            const arrayBuffer = await audioBlob.arrayBuffer();
+            const audioBuffer = await state.voiceAudioContext.decodeAudioData(arrayBuffer);
+            const source = state.voiceAudioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(state.voiceGainNode);
+            source.start(0);
+            
+            // Conectar al visualizador
+            if (state.audioContext && state.analyser) {
+                const analyserSource = state.voiceAudioContext.createBufferSource();
+                analyserSource.buffer = audioBuffer;
+                analyserSource.connect(state.analyser);
+                analyserSource.start(0);
+            }
+            
+            source.onended = () => {
+                source.disconnect();
+            };
+        } catch (decodeError) {
+            // Método 2: Audio Element (fallback)
+            const blobUrl = URL.createObjectURL(audioBlob);
+            const audioElement = new Audio(blobUrl);
+            audioElement.volume = state.currentVolume;
+            
+            if (state.audioContext && state.analyser) {
+                try {
+                    const source = state.audioContext.createMediaElementSource(audioElement);
+                    source.connect(state.analyser);
                     state.analyser.connect(state.audioContext.destination);
+                } catch (e) {
+                    // Si falla, solo reproducir
                 }
-                
-                // Conectar el audio element al visualizador
-                const source = state.audioContext.createMediaElementSource(audioElement);
-                source.connect(state.analyser);
-                state.analyser.connect(state.audioContext.destination);
-            } catch (e) {
-                // Si falla, solo reproducir sin visualizador
-                console.warn('⚠️ No se pudo conectar al visualizador:', e);
             }
-        }
-        
-        // Reproducir audio
-        audioElement.play().catch(err => {
-            console.warn('⚠️ Error al reproducir chunk:', err);
-        });
-        
-        // Limpiar URL después de reproducir
-        audioElement.addEventListener('ended', () => {
-            URL.revokeObjectURL(blobUrl);
-        });
-        
-        // También conectar directamente al gain node para asegurar que se escuche
-        if (state.voiceGainNode) {
-            // Usar Web Audio API para reproducir
-            try {
-                const arrayBuffer = await audioBlob.arrayBuffer();
-                const audioBuffer = await state.voiceAudioContext.decodeAudioData(arrayBuffer);
-                const source = state.voiceAudioContext.createBufferSource();
-                source.buffer = audioBuffer;
-                source.connect(state.voiceGainNode);
-                source.start(0);
-                
-                source.onended = () => {
-                    source.disconnect();
-                };
-            } catch (decodeError) {
-                // Si falla decodeAudioData, usar el método del audio element
-                console.log('Usando método alternativo de reproducción');
-            }
+            
+            audioElement.play().catch(err => {
+                console.warn('⚠️ Error al reproducir:', err);
+            });
+            
+            audioElement.addEventListener('ended', () => {
+                URL.revokeObjectURL(blobUrl);
+            });
         }
 
     } catch (error) {
-        console.warn('⚠️ Error al reproducir audio de voz:', error);
+        console.warn('⚠️ Error al reproducir audio:', error);
     }
 }
 
 function handleVoiceEnd() {
     console.log('👂 Nadie está hablando');
-    
-    // Limpiar cola
     state.audioQueue = [];
-    
-    // Limpiar source del visualizador
-    if (state.voiceStreamSource) {
-        state.voiceStreamSource.disconnect();
-        state.voiceStreamSource = null;
-    }
 }
 
 // =============================================
@@ -673,4 +324,4 @@ async function loadListeners() {
     }
 }
 
-console.log('✅ Radio Escolar FM - Solo Voz - JavaScript cargado');
+console.log('✅ Radio Escolar FM - Panel de Oyentes cargado');

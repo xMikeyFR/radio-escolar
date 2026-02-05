@@ -178,21 +178,44 @@ io.on('connection', (socket) => {
 });
 
 // =============================================
-// RUTA PRINCIPAL - Servir Frontend
+// RUTAS - Servir Frontend
 // =============================================
-// =============================================
-// RUTA PRINCIPAL - Catch-all para SPA
-// =============================================
-app.get('*', (req, res) => {
+
+// Ruta para panel de administrador
+app.get('/admin', (req, res) => {
+    const adminPath = path.join(__dirname, '../frontend/admin.html');
+    console.log(`Petición a /admin`);
+    
+    if (fs.existsSync(adminPath)) {
+        res.sendFile(adminPath);
+    } else {
+        console.error('ERROR: No encuentro admin.html en:', adminPath);
+        res.status(500).send(`Error: No encuentro el archivo frontend/admin.html`);
+    }
+});
+
+// Ruta principal - Panel de oyentes
+app.get('/', (req, res) => {
     const indexPath = path.join(__dirname, '../frontend/index.html');
     console.log(`Petición a root: ${req.url}`);
-
-    // Verificar si existe el archivo (Debug para Render)
+    
     if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
     } else {
         console.error('ERROR CRÍTICO: No encuentro index.html en:', indexPath);
-        res.status(500).send(`Error: No encuentro el archivo frontend/index.html en la ruta: ${indexPath}`);
+        res.status(500).send(`Error: No encuentro el archivo frontend/index.html`);
+    }
+});
+
+// Catch-all para otras rutas (SPA)
+app.get('*', (req, res) => {
+    const indexPath = path.join(__dirname, '../frontend/index.html');
+    console.log(`Petición catch-all: ${req.url}`);
+    
+    if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+    } else {
+        res.status(404).send('Página no encontrada');
     }
 });
 

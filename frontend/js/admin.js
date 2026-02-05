@@ -1,0 +1,455 @@
+/**
+ * RADIO ESCOLAR FM - Panel de Administrador
+ * Solo para ADMIN - Con login y micrófono
+ */
+
+// CONFIGURACIÓN
+const API_BASE_URL = window.location.origin;
+const SOCKET_URL = window.location.origin;
+
+// ELEMENTOS DEL DOM
+let elements = {};
+
+// ESTADO
+let state = {
+    isAdmin: false,
+    currentVolume: 0.75,
+    isMuted: false,
+    socket: null,
+    // Audio para visualizador (micrófono)
+    audioContext: null,
+    analyser: null,
+    microphoneSource: null,
+    // Micrófono
+    mediaStream: null,
+    mediaRecorder: null,
+    isRecording: false
+};
+
+// INICIALIZACIÓN
+function initializeElements() {
+    elements = {
+        loginModal: document.getElementById('loginModal'),
+        loginForm: document.getElementById('loginForm'),
+        loginError: document.getElementById('loginError'),
+        mainContainer: document.getElementById('mainContainer'),
+        logoutBtn: document.getElementById('logoutBtn'),
+        volumeSlider: document.getElementById('volumeSlider'),
+        volumeValue: document.getElementById('volumeValue'),
+        muteBtn: document.getElementById('muteBtn'),
+        micBtn: document.getElementById('micBtn'),
+        visualizer: document.getElementById('visualizer'),
+        listenersCount: document.getElementById('listenersCount')
+    };
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('🎙️ Radio Escolar FM - Panel de Administrador');
+    
+    initializeElements();
+    
+    // Verificar sesión guardada
+    const savedSession = localStorage.getItem('radioAdminSession');
+    if (savedSession === 'true') {
+        checkSavedSession();
+    } else {
+        showLogin();
+    }
+    
+    // Configurar login
+    if (elements.loginForm) {
+        elements.loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    state.isAdmin = true;
+                    localStorage.setItem('radioAdminSession', 'true');
+                    hideLogin();
+                    showAdminPanel();
+                    if (state.socket && state.socket.connected) {
+                        state.socket.emit('admin-auth', { username, password });
+                    }
+                    if (elements.loginError) {
+                        elements.loginError.classList.add('hidden');
+                    }
+                } else {
+                    showLoginError('Credenciales incorrectas');
+                }
+            } catch (error) {
+                showLoginError('Error al conectar con el servidor');
+            }
+        });
+    }
+    
+    if (elements.logoutBtn) {
+        elements.logoutBtn.addEventListener('click', () => {
+            state.isAdmin = false;
+            localStorage.removeItem('radioAdminSession');
+            if (state.socket && state.socket.connected) {
+                stopRecording();
+            }
+            showLogin();
+        });
+    }
+
+    initializeSocket();
+    initializeControls();
+    loadListeners();
+});
+
+// =============================================
+// SISTEMA DE LOGIN
+// =============================================
+
+function showLogin() {
+    if (elements.loginModal) {
+        elements.loginModal.style.display = 'flex';
+    }
+    if (elements.mainContainer) {
+        elements.mainContainer.style.display = 'none';
+    }
+}
+
+function hideLogin() {
+    if (elements.loginModal) {
+        elements.loginModal.style.display = 'none';
+    }
+    if (elements.mainContainer) {
+        elements.mainContainer.style.display = 'block';
+    }
+}
+
+async function checkSavedSession() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/info`);
+        if (response.ok) {
+            hideLogin();
+            showAdminPanel();
+        } else {
+            showLogin();
+        }
+    } catch (error) {
+        showLogin();
+    }
+}
+
+function showLoginError(message) {
+    if (elements.loginError) {
+        elements.loginError.textContent = message;
+        elements.loginError.classList.remove('hidden');
+    }
+}
+
+function showAdminPanel() {
+    state.isAdmin = true;
+    if (elements.micBtn) elements.micBtn.classList.remove('hidden');
+    if (elements.logoutBtn) elements.logoutBtn.classList.remove('hidden');
+    if (!state.audioContext) {
+        setupVisualizer();
+    }
+}
+
+// =============================================
+// SOCKET.IO
+// =============================================
+
+function initializeSocket() {
+    try {
+        state.socket = io(SOCKET_URL);
+
+        state.socket.on('connect', () => {
+            console.log('✅ Conectado al servidor');
+            
+            if (state.isAdmin) {
+                const savedSession = localStorage.getItem('radioAdminSession');
+                if (savedSession === 'true') {
+                    state.socket.emit('admin-auth', {
+                        username: 'ADMINISTRADOR',
+                        password: '987654321'
+                    });
+                }
+            }
+        });
+
+        state.socket.on('admin-authenticated', (data) => {
+            if (data.success) {
+                state.isAdmin = true;
+                showAdminPanel();
+                console.log('✅ Autenticado como administrador');
+            } else {
+                state.isAdmin = false;
+                localStorage.removeItem('radioAdminSession');
+                showLogin();
+            }
+        });
+
+        state.socket.on('listeners-update', (data) => {
+            if (elements.listenersCount) {
+                elements.listenersCount.textContent = data.count;
+            }
+        });
+
+        state.socket.on('error', (data) => {
+            console.warn('⚠️ Error del servidor:', data.message);
+        });
+
+    } catch (error) {
+        console.error('Error Socket.io:', error);
+    }
+}
+
+// =============================================
+// VISUALIZADOR (MICRÓFONO)
+// =============================================
+
+function setupVisualizer() {
+    if (!elements.visualizer) return;
+
+    try {
+        state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        state.analyser = state.audioContext.createAnalyser();
+        state.analyser.fftSize = 128;
+        drawVisualizer();
+    } catch (e) {
+        console.log("AudioContext no soportado:", e);
+    }
+}
+
+function drawVisualizer() {
+    if (!state.analyser || !elements.visualizer) return;
+
+    const canvas = elements.visualizer;
+    const ctx = canvas.getContext('2d');
+    const bufferLength = state.analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    canvas.width = canvas.offsetWidth;
+    canvas.height = canvas.offsetHeight;
+
+    function renderFrame() {
+        requestAnimationFrame(renderFrame);
+
+        if (!state.analyser) return;
+
+        state.analyser.getByteFrequencyData(dataArray);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const barWidth = (canvas.width / bufferLength) * 2.5;
+        let barHeight;
+        let x = 0;
+
+        for (let i = 0; i < bufferLength; i++) {
+            barHeight = (dataArray[i] / 255) * canvas.height;
+            ctx.fillStyle = '#4a90e2';
+
+            if (ctx.roundRect) {
+                ctx.beginPath();
+                ctx.roundRect(x, canvas.height - barHeight, barWidth - 2, barHeight, [2, 2, 0, 0]);
+                ctx.fill();
+            } else {
+                ctx.fillRect(x, canvas.height - barHeight, barWidth - 2, barHeight);
+            }
+
+            x += barWidth + 1;
+        }
+    }
+
+    renderFrame();
+}
+
+// =============================================
+// CONTROLES
+// =============================================
+
+function initializeControls() {
+    if (elements.volumeSlider) {
+        elements.volumeSlider.addEventListener('input', handleVolumeChange);
+    }
+    if (elements.muteBtn) {
+        elements.muteBtn.addEventListener('click', toggleMute);
+    }
+
+    if (elements.micBtn) {
+        elements.micBtn.addEventListener('mousedown', startRecording);
+        elements.micBtn.addEventListener('mouseup', stopRecording);
+        elements.micBtn.addEventListener('mouseleave', stopRecording);
+        elements.micBtn.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            startRecording();
+        });
+        elements.micBtn.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            stopRecording();
+        });
+    }
+}
+
+function handleVolumeChange(e) {
+    const volume = e.target.value / 100;
+    state.currentVolume = volume;
+    if (elements.volumeValue) {
+        elements.volumeValue.textContent = `${e.target.value}%`;
+    }
+    updateVolumeIcon(volume);
+}
+
+function toggleMute() {
+    state.isMuted = !state.isMuted;
+    updateVolumeIcon(state.isMuted ? 0 : state.currentVolume);
+}
+
+function updateVolumeIcon(volume) {
+    if (!elements.muteBtn) return;
+    const icon = elements.muteBtn.querySelector('i');
+    if (!icon) return;
+    
+    icon.className = 'fas';
+
+    if (volume === 0) {
+        icon.classList.add('fa-volume-xmark');
+    } else if (volume < 0.3) {
+        icon.classList.add('fa-volume-off');
+    } else if (volume < 0.7) {
+        icon.classList.add('fa-volume-low');
+    } else {
+        icon.classList.add('fa-volume-high');
+    }
+}
+
+// =============================================
+// MICRÓFONO
+// =============================================
+
+async function startRecording() {
+    if (!state.isAdmin || state.isRecording) return;
+
+    try {
+        state.mediaStream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true
+            } 
+        });
+
+        if (!state.audioContext) {
+            setupVisualizer();
+        }
+
+        if (state.audioContext && !state.microphoneSource) {
+            state.microphoneSource = state.audioContext.createMediaStreamSource(state.mediaStream);
+            state.microphoneSource.connect(state.analyser);
+        }
+
+        const options = {
+            mimeType: 'audio/webm;codecs=opus'
+        };
+        
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+            options.mimeType = 'audio/webm';
+            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                options.mimeType = '';
+            }
+        }
+
+        state.mediaRecorder = new MediaRecorder(state.mediaStream, options);
+
+        state.mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0 && state.socket && state.socket.connected) {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    state.socket.emit('voice-data', {
+                        audio: Array.from(new Uint8Array(reader.result)),
+                        mimeType: event.data.type
+                    });
+                };
+                reader.readAsArrayBuffer(event.data);
+            }
+        };
+
+        state.mediaRecorder.start(100);
+        state.isRecording = true;
+
+        if (elements.micBtn) {
+            elements.micBtn.classList.add('active');
+        }
+
+        if (state.socket && state.socket.connected) {
+            state.socket.emit('voice-start');
+        }
+
+        console.log('🎤 Grabación iniciada');
+
+    } catch (error) {
+        console.warn('⚠️ Error al acceder al micrófono:', error.message);
+        state.isRecording = false;
+        if (elements.micBtn) {
+            elements.micBtn.classList.remove('active');
+        }
+    }
+}
+
+function stopRecording() {
+    if (!state.isRecording) return;
+
+    try {
+        if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
+            state.mediaRecorder.stop();
+        }
+
+        if (state.mediaStream) {
+            state.mediaStream.getTracks().forEach(track => track.stop());
+            state.mediaStream = null;
+        }
+
+        if (state.microphoneSource) {
+            state.microphoneSource.disconnect();
+            state.microphoneSource = null;
+        }
+
+        state.mediaRecorder = null;
+        state.isRecording = false;
+
+        if (elements.micBtn) {
+            elements.micBtn.classList.remove('active');
+        }
+
+        if (state.socket && state.socket.connected) {
+            state.socket.emit('voice-end');
+        }
+
+        console.log('🎤 Grabación detenida');
+
+    } catch (error) {
+        console.warn('⚠️ Error al detener la grabación:', error);
+    }
+}
+
+// =============================================
+// CARGAR DATOS
+// =============================================
+
+async function loadListeners() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/listeners`);
+        const data = await response.json();
+        if (data.success && elements.listenersCount) {
+            elements.listenersCount.textContent = data.data.count;
+        }
+    } catch (error) {
+        console.error('Error al cargar oyentes:', error);
+    }
+}
+
+console.log('✅ Radio Escolar FM - Panel de Administrador cargado');
