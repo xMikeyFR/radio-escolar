@@ -153,14 +153,23 @@ io.on('connection', (socket) => {
         }
     });
     
-    // Cuando un nuevo oyente se conecta y hay un locutor activo, notificar al locutor
+    // CRÍTICO: Cuando un nuevo oyente se conecta y hay un locutor activo, notificar al locutor
     // Esto se ejecuta después de que el socket se conecta
+    // Usar múltiples timeouts para asegurar que el mensaje llegue
     setTimeout(() => {
         if (broadcasterId && !adminSessions.has(socket.id)) {
             io.to(broadcasterId).emit('new-listener', socket.id);
             console.log(`👂 Notificando locutor sobre nuevo oyente: ${socket.id}`);
         }
-    }, 100);
+    }, 50);
+    
+    // Segundo intento por si el primero falla
+    setTimeout(() => {
+        if (broadcasterId && !adminSessions.has(socket.id)) {
+            io.to(broadcasterId).emit('new-listener', socket.id);
+            console.log(`👂 Re-notificando locutor sobre nuevo oyente: ${socket.id}`);
+        }
+    }, 300);
     
     // Enviar lista de oyentes actuales cuando el locutor lo solicita
     socket.on('get-current-listeners', () => {

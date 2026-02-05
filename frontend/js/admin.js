@@ -212,8 +212,16 @@ function initializeSocket() {
         // WebRTC: Cuando un nuevo oyente se conecta, crear conexión
         state.socket.on('new-listener', (listenerId) => {
             console.log('👂 Nuevo oyente conectado:', listenerId);
-            if (state.isRecording && state.mediaStream) {
+            // CRÍTICO: Verificar que no existe ya la conexión y que tenemos mediaStream
+            if (state.isRecording && state.mediaStream && !state.peerConnections.has(listenerId)) {
+                console.log('🔗 Creando conexión con nuevo oyente:', listenerId);
                 createPeerConnection(listenerId);
+            } else {
+                console.warn('⚠️ No se puede crear conexión:', {
+                    isRecording: state.isRecording,
+                    hasMediaStream: !!state.mediaStream,
+                    alreadyExists: state.peerConnections.has(listenerId)
+                });
             }
         });
 
@@ -222,9 +230,16 @@ function initializeSocket() {
             console.log('👂 Oyentes actuales recibidos:', listenerIds);
             if (state.isRecording && state.mediaStream && Array.isArray(listenerIds)) {
                 listenerIds.forEach(listenerId => {
-                    if (listenerId !== state.socket.id) {
+                    if (listenerId !== state.socket.id && !state.peerConnections.has(listenerId)) {
+                        console.log('🔗 Creando conexión con oyente existente:', listenerId);
                         createPeerConnection(listenerId);
                     }
+                });
+            } else {
+                console.warn('⚠️ No se puede procesar lista de oyentes:', {
+                    isRecording: state.isRecording,
+                    hasMediaStream: !!state.mediaStream,
+                    isArray: Array.isArray(listenerIds)
                 });
             }
         });
@@ -477,7 +492,13 @@ async function startRecording() {
         // Notificar al servidor que estamos listos
         state.socket.emit('broadcaster-ready');
         
-        // Solicitar lista de oyentes actuales para crear conexiones
+        // CRÍTICO: Esperar un momento antes de solicitar lista (para que servidor actualice)
+        // Y también solicitar inmediatamente para oyentes ya conectados
+        setTimeout(() => {
+            state.socket.emit('get-current-listeners');
+        }, 200);
+        
+        // También solicitar inmediatamente (para oyentes ya conectados)
         state.socket.emit('get-current-listeners');
         
         state.isRecording = true;

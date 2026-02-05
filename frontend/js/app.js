@@ -139,6 +139,12 @@ function initializeSocket() {
         // WebRTC: Cuando hay un locutor disponible
         state.socket.on('broadcaster-ready', () => {
             console.log('📡 Locutor disponible, esperando offer...');
+            // CRÍTICO: Si ya hay una conexión pero no hay stream, limpiar y esperar nuevo offer
+            if (state.peerConnection && !state.audioElement.srcObject) {
+                console.log('🔄 Limpiando conexión anterior sin stream...');
+                state.peerConnection.close();
+                state.peerConnection = null;
+            }
         });
 
         // WebRTC: Recibir offer del locutor
@@ -181,20 +187,34 @@ async function handleOffer(offer, from) {
                 console.log('🎵 Stream recibido del locutor');
                 const stream = event.streams[0];
                 
+                if (!stream) {
+                    console.error('❌ Stream vacío recibido');
+                    return;
+                }
+                
                 if (state.audioElement) {
+                    // CRÍTICO: Asignar stream inmediatamente
                     state.audioElement.srcObject = stream;
+                    console.log('✅ Stream asignado a audioElement:', {
+                        hasTracks: stream.getTracks().length,
+                        trackKinds: stream.getTracks().map(t => t.kind)
+                    });
                     
                     // Conectar al visualizador inmediatamente (no requiere interacción)
                     connectStreamToVisualizer(stream);
                     
-                    // Intentar reproducir solo si el usuario ya interactuó
-                    if (state.userInteracted) {
-                        playPendingStream();
-                    } else {
-                        // Guardar el stream para reproducirlo cuando el usuario interactúe
-                        state.pendingStream = stream;
-                        console.log('⏳ Stream guardado, esperando interacción del usuario...');
-                    }
+                    // CRÍTICO: Intentar reproducir automáticamente después de un breve delay
+                    // Esto ayuda especialmente en móviles
+                    setTimeout(() => {
+                        if (state.userInteracted) {
+                            playPendingStream();
+                        } else {
+                            // Guardar el stream para reproducirlo cuando el usuario interactúe
+                            state.pendingStream = stream;
+                            console.log('⏳ Stream guardado, esperando interacción del usuario...');
+                            console.log('💡 Toca la pantalla o el control de volumen para escuchar');
+                        }
+                    }, 100);
                 }
             };
             
@@ -246,12 +266,25 @@ async function handleOffer(offer, from) {
 // =============================================
 
 function playPendingStream() {
-    if (!state.audioElement || !state.audioElement.srcObject) return;
+    if (!state.audioElement) {
+        console.error('❌ audioElement no existe');
+        return;
+    }
+    
+    if (!state.audioElement.srcObject) {
+        console.warn('⚠️ No hay srcObject asignado');
+        return;
+    }
     
     // CRÍTICO PARA MÓVILES: Desmutear antes de reproducir
     if (state.audioElement.muted) {
         state.audioElement.muted = false;
         console.log('🔊 Audio desmuteado para reproducción');
+    }
+    
+    // CRÍTICO: Asegurar que el volumen esté configurado
+    if (state.audioElement.volume === 0 && !state.isMuted) {
+        state.audioElement.volume = state.currentVolume;
     }
     
     // Mejorar manejo de errores para diagnóstico en móviles
@@ -261,16 +294,24 @@ function playPendingStream() {
         playPromise
             .then(() => {
                 console.log('✅ Audio reproduciéndose correctamente');
+                console.log('✅ Estado final:', {
+                    paused: state.audioElement.paused,
+                    muted: state.audioElement.muted,
+                    volume: state.audioElement.volume,
+                    readyState: state.audioElement.readyState
+                });
                 state.pendingStream = null; // Ya no está pendiente
             })
             .catch(err => {
-                console.warn('⚠️ Error al reproducir audio:', err);
-                console.warn('⚠️ Estado del audio:', {
+                console.error('❌ Error al reproducir audio:', err);
+                console.error('❌ Estado del audio:', {
                     paused: state.audioElement.paused,
                     muted: state.audioElement.muted,
+                    volume: state.audioElement.volume,
                     srcObject: !!state.audioElement.srcObject,
                     readyState: state.audioElement.readyState,
-                    networkState: state.audioElement.networkState
+                    networkState: state.audioElement.networkState,
+                    error: err.message
                 });
                 
                 // Si falla, guardar el stream para intentar más tarde
@@ -278,6 +319,8 @@ function playPendingStream() {
                     state.pendingStream = state.audioElement.srcObject;
                 }
             });
+    } else {
+        console.warn('⚠️ play() retornó undefined');
     }
 }
 
