@@ -33,28 +33,18 @@ let state = {
     pendingStream: null
 };
 
-// CONFIGURACIÓN WebRTC
-// CRÍTICO PARA MÓVILES: Agregar TURN server para Android (NATs restrictivos)
+// CONFIGURACIÓN WebRTC - 100% cualquier red (WiFi, datos móviles)
+// iceTransportPolicy: 'relay' = forzar TURN (evita NAT/firewall)
 const rtcConfig = {
+    iceTransportPolicy: 'relay',
+    iceCandidatePoolSize: 10,
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        // TURN server gratuito para móviles (Android especialmente)
-        {
-            urls: 'turn:openrelay.metered.ca:80',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-        },
-        {
-            urls: 'turn:openrelay.metered.ca:443',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-        },
-        {
-            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-        }
+        { urls: 'turns:freeturn.net:5349', username: 'free', credential: 'free' },
+        { urls: 'turn:freeturn.net:3478', username: 'free', credential: 'free' },
+        { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+        { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+        { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }
     ]
 };
 
