@@ -259,16 +259,19 @@ async function handleVoiceData(data) {
             const audioBuffer = await state.voiceAudioContext.decodeAudioData(arrayBuffer);
             const source = state.voiceAudioContext.createBufferSource();
             source.buffer = audioBuffer;
-            source.connect(state.voiceGainNode);
-            source.start(0);
             
-            // Conectar al visualizador
+            // Conectar al gain node para reproducir
+            source.connect(state.voiceGainNode);
+            
+            // Conectar también al visualizador si está disponible
             if (state.audioContext && state.analyser) {
-                const analyserSource = state.voiceAudioContext.createBufferSource();
-                analyserSource.buffer = audioBuffer;
-                analyserSource.connect(state.analyser);
-                analyserSource.start(0);
+                // Crear un gain node intermedio para el visualizador
+                const analyserGain = state.voiceAudioContext.createGain();
+                source.connect(analyserGain);
+                analyserGain.connect(state.analyser);
             }
+            
+            source.start(0);
             
             source.onended = () => {
                 source.disconnect();
@@ -279,13 +282,18 @@ async function handleVoiceData(data) {
             const audioElement = new Audio(blobUrl);
             audioElement.volume = state.currentVolume;
             
+            // Conectar al visualizador usando MediaElementSource
             if (state.audioContext && state.analyser) {
                 try {
-                    const source = state.audioContext.createMediaElementSource(audioElement);
-                    source.connect(state.analyser);
-                    state.analyser.connect(state.audioContext.destination);
+                    // Solo crear una conexión si no existe ya
+                    if (!state.voiceStreamSource) {
+                        const source = state.audioContext.createMediaElementSource(audioElement);
+                        source.connect(state.analyser);
+                        state.analyser.connect(state.audioContext.destination);
+                        state.voiceStreamSource = source;
+                    }
                 } catch (e) {
-                    // Si falla, solo reproducir
+                    // Si falla (ya hay conexión), solo reproducir
                 }
             }
             
@@ -306,6 +314,16 @@ async function handleVoiceData(data) {
 function handleVoiceEnd() {
     console.log('👂 Nadie está hablando');
     state.audioQueue = [];
+    
+    // Limpiar conexión del visualizador
+    if (state.voiceStreamSource) {
+        try {
+            state.voiceStreamSource.disconnect();
+            state.voiceStreamSource = null;
+        } catch (e) {
+            // Ignorar errores de desconexión
+        }
+    }
 }
 
 // =============================================
