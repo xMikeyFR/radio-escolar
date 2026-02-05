@@ -22,7 +22,9 @@ let state = {
     peerConnection: null,
     audioElement: null, // Elemento <audio> para reproducir stream
     // Flag para saber si el usuario ya interactuó
-    userInteracted: false
+    userInteracted: false,
+    // Stream recibido pero aún no reproducido (esperando interacción)
+    pendingStream: null
 };
 
 // CONFIGURACIÓN WebRTC
@@ -45,7 +47,7 @@ function initializeElements() {
     
     // Crear elemento <audio> para reproducir el stream WebRTC
     state.audioElement = document.createElement('audio');
-    state.audioElement.autoplay = true;
+    state.audioElement.autoplay = false; // NO autoplay - esperar interacción del usuario
     state.audioElement.controls = false;
     state.audioElement.style.display = 'none';
     state.audioElement.volume = state.currentVolume;
@@ -62,20 +64,32 @@ document.addEventListener('DOMContentLoaded', () => {
     loadListeners();
     
     // Marcar interacción del usuario al hacer clic en cualquier parte
-    document.addEventListener('click', () => {
-        if (!state.userInteracted) {
-            state.userInteracted = true;
-            console.log('✅ Usuario interactuó - AudioContext puede iniciarse');
-        }
-    }, { once: true });
+    document.addEventListener('click', handleUserInteraction, { once: true });
     
     // También con cualquier tecla
-    document.addEventListener('keydown', () => {
+    document.addEventListener('keydown', handleUserInteraction, { once: true });
+    
+    // Función para manejar la interacción del usuario
+    function handleUserInteraction() {
         if (!state.userInteracted) {
             state.userInteracted = true;
             console.log('✅ Usuario interactuó - AudioContext puede iniciarse');
+            
+            // Reanudar AudioContext si está suspendido
+            if (state.audioContext && state.audioContext.state === 'suspended') {
+                state.audioContext.resume().then(() => {
+                    console.log('✅ AudioContext reanudado');
+                }).catch(err => {
+                    console.warn('⚠️ Error al reanudar AudioContext:', err);
+                });
+            }
+            
+            // Si hay un stream pendiente, intentar reproducirlo
+            if (state.pendingStream) {
+                playPendingStream();
+            }
         }
-    }, { once: true });
+    }
 });
 
 // =============================================
@@ -143,20 +157,17 @@ async function handleOffer(offer, from) {
                 
                 if (state.audioElement) {
                     state.audioElement.srcObject = stream;
-                    state.audioElement.play().catch(err => {
-                        console.warn('⚠️ Error al reproducir:', err);
-                    });
                     
-                    // Conectar al visualizador
-                    if (state.audioContext && state.analyser) {
-                        try {
-                            const source = state.audioContext.createMediaStreamSource(stream);
-                            source.connect(state.analyser);
-                            state.analyser.connect(state.audioContext.destination);
-                            console.log('✅ Stream conectado al visualizador');
-                        } catch (e) {
-                            console.warn('⚠️ No se pudo conectar al visualizador:', e);
-                        }
+                    // Conectar al visualizador inmediatamente (no requiere interacción)
+                    connectStreamToVisualizer(stream);
+                    
+                    // Intentar reproducir solo si el usuario ya interactuó
+                    if (state.userInteracted) {
+                        playPendingStream();
+                    } else {
+                        // Guardar el stream para reproducirlo cuando el usuario interactúe
+                        state.pendingStream = stream;
+                        console.log('⏳ Stream guardado, esperando interacción del usuario...');
                     }
                 }
             };
@@ -205,40 +216,84 @@ async function handleOffer(offer, from) {
 }
 
 // =============================================
+// FUNCIONES AUXILIARES PARA AUDIO
+// =============================================
+
+function playPendingStream() {
+    if (!state.audioElement || !state.audioElement.srcObject) return;
+    
+    state.audioElement.play().then(() => {
+        console.log('✅ Audio reproduciéndose correctamente');
+        state.pendingStream = null; // Ya no está pendiente
+    }).catch(err => {
+        console.warn('⚠️ Error al reproducir audio:', err);
+        // Si falla, guardar el stream para intentar más tarde
+        if (state.audioElement.srcObject) {
+            state.pendingStream = state.audioElement.srcObject;
+        }
+    });
+}
+
+function connectStreamToVisualizer(stream) {
+    if (!state.audioContext || !state.analyser) {
+        // Crear AudioContext solo cuando sea necesario (no requiere interacción para visualización)
+        try {
+            state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            state.analyser = state.audioContext.createAnalyser();
+            state.analyser.fftSize = 128;
+            state.analyser.smoothingTimeConstant = 0.8;
+            drawVisualizer();
+        } catch (e) {
+            console.log("AudioContext no soportado:", e);
+            return;
+        }
+    }
+    
+    try {
+        const source = state.audioContext.createMediaStreamSource(stream);
+        source.connect(state.analyser);
+        // NO conectar a destination para evitar reproducción automática
+        // Solo visualización, no reproducción
+        console.log('✅ Stream conectado al visualizador');
+    } catch (e) {
+        console.warn('⚠️ No se pudo conectar al visualizador:', e);
+    }
+}
+
+// =============================================
 // VISUALIZADOR PARA OYENTES
 // =============================================
 
 function setupListenerVisualizer() {
     if (!elements.visualizer) return;
 
-    try {
-        state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        state.analyser = state.audioContext.createAnalyser();
-        state.analyser.fftSize = 128;
-        state.analyser.smoothingTimeConstant = 0.8;
-        drawVisualizer();
-    } catch (e) {
-        console.log("AudioContext no soportado:", e);
-    }
+    // NO crear AudioContext aquí - se creará cuando recibamos el stream
+    // Esto evita problemas con la política de autoplay
+    drawVisualizer();
 }
 
 function drawVisualizer() {
-    if (!state.analyser || !elements.visualizer) return;
+    if (!elements.visualizer) return;
 
     const canvas = elements.visualizer;
     const ctx = canvas.getContext('2d');
-    const bufferLength = state.analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-
+    
     canvas.width = canvas.offsetWidth;
     canvas.height = canvas.offsetHeight;
 
     function renderFrame() {
         requestAnimationFrame(renderFrame);
 
-        if (!state.analyser) return;
+        if (!state.analyser) {
+            // Si no hay analyser, dibujar canvas vacío
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            return;
+        }
 
+        const bufferLength = state.analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
         state.analyser.getByteFrequencyData(dataArray);
+        
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         const barWidth = (canvas.width / bufferLength) * 2.5;
@@ -271,13 +326,33 @@ function drawVisualizer() {
 function initializeControls() {
     if (elements.volumeSlider) {
         elements.volumeSlider.addEventListener('input', (e) => {
-            state.userInteracted = true;
+            if (!state.userInteracted) {
+                state.userInteracted = true;
+                // Reanudar AudioContext si está suspendido
+                if (state.audioContext && state.audioContext.state === 'suspended') {
+                    state.audioContext.resume();
+                }
+                // Intentar reproducir stream pendiente
+                if (state.pendingStream) {
+                    playPendingStream();
+                }
+            }
             handleVolumeChange(e);
         });
     }
     if (elements.muteBtn) {
         elements.muteBtn.addEventListener('click', () => {
-            state.userInteracted = true;
+            if (!state.userInteracted) {
+                state.userInteracted = true;
+                // Reanudar AudioContext si está suspendido
+                if (state.audioContext && state.audioContext.state === 'suspended') {
+                    state.audioContext.resume();
+                }
+                // Intentar reproducir stream pendiente
+                if (state.pendingStream) {
+                    playPendingStream();
+                }
+            }
             toggleMute();
         });
     }
