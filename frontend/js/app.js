@@ -248,12 +248,14 @@ function updateVolumeIcon(volume) {
 function handleVoiceStart() {
     console.log('👂 Alguien está hablando - Iniciando reproducción');
     
-    // Inicializar AudioContext para oyentes
+    // Inicializar AudioContext para oyentes SIEMPRE
     if (!state.voiceAudioContext) {
+        console.log('🔧 Inicializando voiceAudioContext...');
         state.voiceAudioContext = new (window.AudioContext || window.webkitAudioContext)();
         state.voiceGainNode = state.voiceAudioContext.createGain();
         state.voiceGainNode.gain.value = state.currentVolume;
         state.voiceGainNode.connect(state.voiceAudioContext.destination);
+        console.log('✅ voiceAudioContext inicializado');
     }
 
     if (state.voiceAudioContext.state === 'suspended') {
@@ -266,9 +268,21 @@ function handleVoiceStart() {
     state.audioChunks = [];
     state.isReceivingAudio = true;
     state.audioQueue = [];
+    
+    console.log('✅ Estado de recepción activado:', {
+        hasContext: !!state.voiceAudioContext,
+        isReceiving: state.isReceivingAudio,
+        contextState: state.voiceAudioContext ? state.voiceAudioContext.state : 'null'
+    });
 }
 
 async function handleVoiceData(data) {
+    // Si no hay contexto o no está recibiendo, inicializar
+    if (!state.voiceAudioContext) {
+        console.log('⚠️ Contexto no inicializado, inicializando ahora...');
+        handleVoiceStart();
+    }
+    
     if (!data.audio || !state.voiceAudioContext || !state.isReceivingAudio) {
         console.warn('⚠️ No se puede procesar audio:', {
             hasAudio: !!data.audio,
