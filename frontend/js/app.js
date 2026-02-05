@@ -93,6 +93,7 @@ function setupListenerVisualizer() {
         state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
         state.analyser = state.audioContext.createAnalyser();
         state.analyser.fftSize = 128;
+        state.analyser.smoothingTimeConstant = 0.8;
         drawVisualizer();
     } catch (e) {
         console.log("AudioContext no soportado:", e);
