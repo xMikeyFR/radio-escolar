@@ -25,7 +25,8 @@ let state = {
     // Buffer para acumular chunks de audio
     audioChunks: [],
     isReceivingAudio: false,
-    currentAudioBlob: null
+    currentAudioBlob: null,
+    audioQueue: [] // Cola de elementos audio para reproducir en secuencia
 };
 
 // INICIALIZACIÓN
@@ -172,9 +173,12 @@ function handleVolumeChange(e) {
         state.voiceGainNode.gain.value = volume;
     }
     
-    if (state.voiceAudioElement) {
-        state.voiceAudioElement.volume = volume;
-    }
+    // Actualizar volumen de todos los elementos audio en cola
+    state.audioQueue.forEach(audio => {
+        if (audio && !audio.ended) {
+            audio.volume = volume;
+        }
+    });
 
     if (volume > 0) {
         state.isMuted = false;
@@ -188,9 +192,11 @@ function toggleMute() {
         if (state.voiceGainNode) {
             state.voiceGainNode.gain.value = 0;
         }
-        if (state.voiceAudioElement) {
-            state.voiceAudioElement.volume = 0;
-        }
+        state.audioQueue.forEach(audio => {
+            if (audio && !audio.ended) {
+                audio.volume = 0;
+            }
+        });
         if (elements.volumeSlider) {
             elements.volumeSlider.value = 0;
         }
@@ -201,9 +207,11 @@ function toggleMute() {
         if (state.voiceGainNode) {
             state.voiceGainNode.gain.value = state.currentVolume;
         }
-        if (state.voiceAudioElement) {
-            state.voiceAudioElement.volume = state.currentVolume;
-        }
+        state.audioQueue.forEach(audio => {
+            if (audio && !audio.ended) {
+                audio.volume = state.currentVolume;
+            }
+        });
         if (elements.volumeSlider) {
             elements.volumeSlider.value = state.currentVolume * 100;
         }
@@ -234,7 +242,7 @@ function updateVolumeIcon(volume) {
 }
 
 // =============================================
-// REPRODUCCIÓN DE VOZ (OYENTES)
+// REPRODUCCIÓN DE VOZ (OYENTES) - MÉTODO MEJORADO
 // =============================================
 
 function handleVoiceStart() {
@@ -257,26 +265,7 @@ function handleVoiceStart() {
     // Limpiar buffer y empezar a recibir
     state.audioChunks = [];
     state.isReceivingAudio = true;
-    
-    // Crear elemento audio si no existe
-    if (!state.voiceAudioElement) {
-        state.voiceAudioElement = document.createElement('audio');
-        state.voiceAudioElement.autoplay = true;
-        state.voiceAudioElement.volume = state.currentVolume;
-        state.voiceAudioElement.style.display = 'none';
-        document.body.appendChild(state.voiceAudioElement);
-        
-        // Conectar al visualizador
-        if (state.audioContext && state.analyser) {
-            try {
-                const source = state.audioContext.createMediaElementSource(state.voiceAudioElement);
-                source.connect(state.analyser);
-                state.analyser.connect(state.audioContext.destination);
-            } catch (e) {
-                console.warn('⚠️ No se pudo conectar al visualizador:', e);
-            }
-        }
-    }
+    state.audioQueue = [];
 }
 
 async function handleVoiceData(data) {
@@ -294,36 +283,56 @@ async function handleVoiceData(data) {
             await state.voiceAudioContext.resume();
         }
 
-        // Agregar chunk al buffer
+        // Crear blob con el chunk individual
         const chunk = new Uint8Array(data.audio);
-        state.audioChunks.push(chunk);
-        
-        // Crear blob con todos los chunks acumulados
-        const audioBlob = new Blob(state.audioChunks, { 
+        const audioBlob = new Blob([chunk], { 
             type: data.mimeType || 'audio/webm;codecs=opus' 
         });
         
-        // Actualizar el src del elemento audio con el blob acumulado
-        if (state.voiceAudioElement) {
-            // Si ya hay un blob anterior, revocarlo
-            if (state.currentAudioBlob) {
-                URL.revokeObjectURL(state.currentAudioBlob);
-            }
-            
-            const blobUrl = URL.createObjectURL(audioBlob);
-            state.currentAudioBlob = blobUrl;
-            state.voiceAudioElement.src = blobUrl;
-            
-            // Intentar reproducir
-            if (state.voiceAudioElement.paused) {
-                const playPromise = state.voiceAudioElement.play();
-                if (playPromise !== undefined) {
-                    playPromise.catch(err => {
-                        console.warn('⚠️ Error al reproducir audio:', err);
-                    });
-                }
+        // Crear elemento Audio para cada chunk y reproducir en secuencia
+        const blobUrl = URL.createObjectURL(audioBlob);
+        const audioElement = new Audio(blobUrl);
+        audioElement.volume = state.currentVolume;
+        
+        // Agregar a la cola
+        state.audioQueue.push(audioElement);
+        
+        // Conectar al visualizador (solo el primer elemento)
+        if (state.audioQueue.length === 1 && state.audioContext && state.analyser) {
+            try {
+                const source = state.audioContext.createMediaElementSource(audioElement);
+                source.connect(state.analyser);
+                state.analyser.connect(state.audioContext.destination);
+            } catch (e) {
+                console.warn('⚠️ No se pudo conectar al visualizador:', e);
             }
         }
+        
+        // Reproducir cuando el anterior termine o si es el primero
+        if (state.audioQueue.length === 1) {
+            // Primer elemento, reproducir inmediatamente
+            audioElement.play().catch(err => {
+                console.warn('⚠️ Error al reproducir audio:', err);
+            });
+        } else {
+            // Esperar a que el anterior termine
+            const previousAudio = state.audioQueue[state.audioQueue.length - 2];
+            previousAudio.addEventListener('ended', () => {
+                audioElement.play().catch(err => {
+                    console.warn('⚠️ Error al reproducir audio:', err);
+                });
+            }, { once: true });
+        }
+        
+        // Limpiar URL cuando termine
+        audioElement.addEventListener('ended', () => {
+            URL.revokeObjectURL(blobUrl);
+            // Remover de la cola
+            const index = state.audioQueue.indexOf(audioElement);
+            if (index > -1) {
+                state.audioQueue.splice(index, 1);
+            }
+        }, { once: true });
         
         // También intentar con Web Audio API como método alternativo
         try {
@@ -360,11 +369,14 @@ function handleVoiceEnd() {
     state.isReceivingAudio = false;
     state.audioChunks = [];
     
-    // Pausar elemento audio
-    if (state.voiceAudioElement) {
-        state.voiceAudioElement.pause();
-        state.voiceAudioElement.src = '';
-    }
+    // Limpiar cola de audio
+    state.audioQueue.forEach(audio => {
+        if (audio && !audio.ended) {
+            audio.pause();
+            audio.src = '';
+        }
+    });
+    state.audioQueue = [];
     
     // Limpiar blob URL
     if (state.currentAudioBlob) {
