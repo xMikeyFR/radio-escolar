@@ -118,9 +118,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             }
             
-            // Si hay un stream pendiente, intentar reproducirlo
             if (state.pendingStream) {
-                playPendingStream();
+                playPendingStream(true);
             }
         }
     }
@@ -207,23 +206,8 @@ async function handleOffer(offer, from) {
                     state.audioElement.srcObject = stream;
                     console.log('✅ Stream asignado:', { tracks: stream.getTracks().length });
                     connectStreamToVisualizer(stream);
-                    
-                    // LÓGICA SEPARADA: Móvil vs Desktop
-                    if (isMobile()) {
-                        // MÓVIL: play() DEBE ser síncrono con user gesture. Mostrar botón.
-                        state.pendingStream = stream;
-                        showPlayButton();
-                        console.log('📱 Móvil: Toca el botón para escuchar');
-                    } else {
-                        // DESKTOP: intentar reproducción automática (sin setTimeout - pierde user gesture)
-                        if (state.userInteracted) {
-                            playPendingStream();
-                        } else {
-                            state.pendingStream = stream;
-                            showPlayButton();
-                            console.log('💡 Toca el botón o cualquier parte para escuchar');
-                        }
-                    }
+                    // Intentar reproducción automática (play muted→unmute permite autoplay sin user gesture)
+                    playPendingStream();
                 }
             };
             
@@ -285,64 +269,40 @@ function hidePlayButton() {
     }
 }
 
-function playPendingStream() {
-    if (!state.audioElement) {
-        console.error('❌ audioElement no existe');
-        return;
-    }
+/**
+ * @param {boolean} fromUserGesture - true si se llama desde click/touch del botón.
+ *   iOS ignora unmute en .then() (fuera del gesto). Solo con user gesture: unmute+play síncronos.
+ */
+function playPendingStream(fromUserGesture = false) {
+    if (!state.audioElement || !state.audioElement.srcObject) return;
     
-    if (!state.audioElement.srcObject) {
-        console.warn('⚠️ No hay srcObject asignado');
-        return;
-    }
-    
-    // CRÍTICO PARA MÓVILES: Desmutear antes de reproducir
-    if (state.audioElement.muted) {
-        state.audioElement.muted = false;
-        console.log('🔊 Audio desmuteado para reproducción');
-    }
-    
-    // CRÍTICO: Asegurar que el volumen esté configurado
     if (state.audioElement.volume === 0 && !state.isMuted) {
         state.audioElement.volume = state.currentVolume;
     }
     
-    // Mejorar manejo de errores para diagnóstico en móviles
-    const playPromise = state.audioElement.play();
-    
-    if (playPromise !== undefined) {
-        playPromise
-            .then(() => {
-                console.log('✅ Audio reproduciéndose correctamente');
-                console.log('✅ Estado final:', {
-                    paused: state.audioElement.paused,
-                    muted: state.audioElement.muted,
-                    volume: state.audioElement.volume,
-                    readyState: state.audioElement.readyState
-                });
-                state.pendingStream = null;
-                hidePlayButton();
-            })
-            .catch(err => {
-                console.error('❌ Error al reproducir audio:', err);
-                console.error('❌ Estado del audio:', {
-                    paused: state.audioElement.paused,
-                    muted: state.audioElement.muted,
-                    volume: state.audioElement.volume,
-                    srcObject: !!state.audioElement.srcObject,
-                    readyState: state.audioElement.readyState,
-                    networkState: state.audioElement.networkState,
-                    error: err.message
-                });
-                
-                // Si falla, mostrar botón para que el usuario toque (requiere user gesture)
-                if (state.audioElement.srcObject) {
-                    state.pendingStream = state.audioElement.srcObject;
-                    showPlayButton();
-                }
-            });
+    if (fromUserGesture) {
+        // TOCAR BOTÓN: unmute y play EN EL MISMO handler (iOS requiere esto)
+        state.audioElement.muted = false;
+        state.audioElement.play().then(() => {
+            state.pendingStream = null;
+            hidePlayButton();
+        }).catch(err => {
+            console.error('❌ Error play (user gesture):', err);
+            showPlayButton();
+        });
     } else {
-        console.warn('⚠️ play() retornó undefined');
+        // AUTOMÁTICO: play muted (permitido), luego unmute en .then() (puede fallar en iOS)
+        state.audioElement.muted = true;
+        state.audioElement.play().then(() => {
+            state.audioElement.muted = false;
+            state.pendingStream = null;
+            hidePlayButton();
+        }).catch(() => {
+            if (state.audioElement.srcObject) {
+                state.pendingStream = state.audioElement.srcObject;
+                showPlayButton();
+            }
+        });
     }
 }
 
@@ -441,7 +401,7 @@ function setupPlayButton() {
         if (state.audioContext && state.audioContext.state === 'suspended') {
             state.audioContext.resume();
         }
-        playPendingStream();
+        playPendingStream(true); // true = desde user gesture (unmute+play síncronos para iOS)
     };
     elements.playBtn.addEventListener('click', handlePlay);
     elements.playBtn.addEventListener('touchend', (e) => {
@@ -466,7 +426,7 @@ function initializeControls() {
                 }
                 // Intentar reproducir stream pendiente
                 if (state.pendingStream) {
-                    playPendingStream();
+                    playPendingStream(true);
                 }
             }
         }, { passive: true });
@@ -474,13 +434,11 @@ function initializeControls() {
         elements.volumeSlider.addEventListener('input', (e) => {
             if (!state.userInteracted) {
                 state.userInteracted = true;
-                // Reanudar AudioContext si está suspendido
                 if (state.audioContext && state.audioContext.state === 'suspended') {
                     state.audioContext.resume();
                 }
-                // Intentar reproducir stream pendiente
                 if (state.pendingStream) {
-                    playPendingStream();
+                    playPendingStream(true);
                 }
             }
             handleVolumeChange(e);
@@ -489,16 +447,14 @@ function initializeControls() {
     if (elements.muteBtn) {
         // CRÍTICO PARA MÓVILES: Agregar touchstart además de click
         elements.muteBtn.addEventListener('touchstart', (e) => {
-            e.preventDefault(); // Prevenir doble evento
+            e.preventDefault();
             if (!state.userInteracted) {
                 state.userInteracted = true;
-                // Reanudar AudioContext si está suspendido
                 if (state.audioContext && state.audioContext.state === 'suspended') {
                     state.audioContext.resume();
                 }
-                // Intentar reproducir stream pendiente
                 if (state.pendingStream) {
-                    playPendingStream();
+                    playPendingStream(true);
                 }
             }
             toggleMute();
@@ -507,13 +463,11 @@ function initializeControls() {
         elements.muteBtn.addEventListener('click', () => {
             if (!state.userInteracted) {
                 state.userInteracted = true;
-                // Reanudar AudioContext si está suspendido
                 if (state.audioContext && state.audioContext.state === 'suspended') {
                     state.audioContext.resume();
                 }
-                // Intentar reproducir stream pendiente
                 if (state.pendingStream) {
-                    playPendingStream();
+                    playPendingStream(true);
                 }
             }
             toggleMute();
