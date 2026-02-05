@@ -49,6 +49,11 @@ function initializeElements() {
     state.audioElement = document.createElement('audio');
     state.audioElement.autoplay = false; // NO autoplay - esperar interacción del usuario
     state.audioElement.controls = false;
+    // CRÍTICO PARA MÓVILES: Atributos necesarios para Android/iOS
+    state.audioElement.playsInline = true; // Para iOS
+    state.audioElement.setAttribute('playsinline', 'true'); // Compatibilidad
+    state.audioElement.setAttribute('webkit-playsinline', 'true'); // iOS antiguo
+    state.audioElement.muted = true; // Inicialmente muted (requerido en móviles)
     state.audioElement.style.display = 'none';
     state.audioElement.volume = state.currentVolume;
     document.body.appendChild(state.audioElement);
@@ -63,11 +68,15 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeControls();
     loadListeners();
     
-    // Marcar interacción del usuario al hacer clic en cualquier parte
+    // Marcar interacción del usuario al hacer clic en cualquier parte (desktop)
     document.addEventListener('click', handleUserInteraction, { once: true });
     
-    // También con cualquier tecla
+    // También con cualquier tecla (desktop)
     document.addEventListener('keydown', handleUserInteraction, { once: true });
+    
+    // CRÍTICO PARA MÓVILES: Eventos touch (más confiables en Android/iOS)
+    document.addEventListener('touchstart', handleUserInteraction, { once: true, passive: true });
+    document.addEventListener('touchend', handleUserInteraction, { once: true, passive: true });
     
     // Función para manejar la interacción del usuario
     function handleUserInteraction() {
@@ -222,16 +231,37 @@ async function handleOffer(offer, from) {
 function playPendingStream() {
     if (!state.audioElement || !state.audioElement.srcObject) return;
     
-    state.audioElement.play().then(() => {
-        console.log('✅ Audio reproduciéndose correctamente');
-        state.pendingStream = null; // Ya no está pendiente
-    }).catch(err => {
-        console.warn('⚠️ Error al reproducir audio:', err);
-        // Si falla, guardar el stream para intentar más tarde
-        if (state.audioElement.srcObject) {
-            state.pendingStream = state.audioElement.srcObject;
-        }
-    });
+    // CRÍTICO PARA MÓVILES: Desmutear antes de reproducir
+    if (state.audioElement.muted) {
+        state.audioElement.muted = false;
+        console.log('🔊 Audio desmuteado para reproducción');
+    }
+    
+    // Mejorar manejo de errores para diagnóstico en móviles
+    const playPromise = state.audioElement.play();
+    
+    if (playPromise !== undefined) {
+        playPromise
+            .then(() => {
+                console.log('✅ Audio reproduciéndose correctamente');
+                state.pendingStream = null; // Ya no está pendiente
+            })
+            .catch(err => {
+                console.warn('⚠️ Error al reproducir audio:', err);
+                console.warn('⚠️ Estado del audio:', {
+                    paused: state.audioElement.paused,
+                    muted: state.audioElement.muted,
+                    srcObject: !!state.audioElement.srcObject,
+                    readyState: state.audioElement.readyState,
+                    networkState: state.audioElement.networkState
+                });
+                
+                // Si falla, guardar el stream para intentar más tarde
+                if (state.audioElement.srcObject) {
+                    state.pendingStream = state.audioElement.srcObject;
+                }
+            });
+    }
 }
 
 function connectStreamToVisualizer(stream) {
@@ -325,6 +355,21 @@ function drawVisualizer() {
 
 function initializeControls() {
     if (elements.volumeSlider) {
+        // CRÍTICO PARA MÓVILES: Agregar touchstart además de input
+        elements.volumeSlider.addEventListener('touchstart', (e) => {
+            if (!state.userInteracted) {
+                state.userInteracted = true;
+                // Reanudar AudioContext si está suspendido
+                if (state.audioContext && state.audioContext.state === 'suspended') {
+                    state.audioContext.resume();
+                }
+                // Intentar reproducir stream pendiente
+                if (state.pendingStream) {
+                    playPendingStream();
+                }
+            }
+        }, { passive: true });
+        
         elements.volumeSlider.addEventListener('input', (e) => {
             if (!state.userInteracted) {
                 state.userInteracted = true;
@@ -341,6 +386,23 @@ function initializeControls() {
         });
     }
     if (elements.muteBtn) {
+        // CRÍTICO PARA MÓVILES: Agregar touchstart además de click
+        elements.muteBtn.addEventListener('touchstart', (e) => {
+            e.preventDefault(); // Prevenir doble evento
+            if (!state.userInteracted) {
+                state.userInteracted = true;
+                // Reanudar AudioContext si está suspendido
+                if (state.audioContext && state.audioContext.state === 'suspended') {
+                    state.audioContext.resume();
+                }
+                // Intentar reproducir stream pendiente
+                if (state.pendingStream) {
+                    playPendingStream();
+                }
+            }
+            toggleMute();
+        }, { passive: false });
+        
         elements.muteBtn.addEventListener('click', () => {
             if (!state.userInteracted) {
                 state.userInteracted = true;
@@ -381,6 +443,8 @@ function toggleMute() {
     if (state.isMuted) {
         if (state.audioElement) {
             state.audioElement.volume = 0;
+            // CRÍTICO PARA MÓVILES: No mutear el elemento, solo volumen a 0
+            // (mutear puede causar problemas en algunos móviles)
         }
         if (elements.volumeSlider) {
             elements.volumeSlider.value = 0;
@@ -391,6 +455,10 @@ function toggleMute() {
     } else {
         if (state.audioElement) {
             state.audioElement.volume = state.currentVolume;
+            // Asegurar que no esté muted cuando se desmutea
+            if (state.audioElement.muted) {
+                state.audioElement.muted = false;
+            }
         }
         if (elements.volumeSlider) {
             elements.volumeSlider.value = state.currentVolume * 100;
