@@ -1,54 +1,28 @@
 /**
- * RADIO ESCOLAR FM - Solo Voz
- * Panel para OYENTES - Sin login (WebRTC)
+ * RADIO ESCOLAR FM - Panel de Oyentes
+ * Audio via servidor (Socket.io) - funciona en cualquier red
  */
 
-// CONFIGURACIÓN
 const API_BASE_URL = window.location.origin;
 const SOCKET_URL = window.location.origin;
 
-// ELEMENTOS DEL DOM
 let elements = {};
-
-// Detectar móvil (iOS, Android) - lógica separada para autoplay
-function isMobile() {
-    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
-        || ('ontouchstart' in window && window.innerWidth < 768);
-}
-
-// ESTADO
 let state = {
     currentVolume: 0.75,
     isMuted: false,
     socket: null,
-    // Audio para visualizador (voz recibida)
     audioContext: null,
     analyser: null,
-    // WebRTC
-    peerConnection: null,
-    audioElement: null, // Elemento <audio> para reproducir stream
-    // Flag para saber si el usuario ya interactuó
+    audioElement: null,
+    mediaSource: null,
+    sourceBuffer: null,
+    chunkQueue: [],
+    isAppending: false,
     userInteracted: false,
-    // Stream recibido pero aún no reproducido (esperando interacción)
-    pendingStream: null
+    pendingStream: null,
+    isReceiving: false
 };
 
-// CONFIGURACIÓN WebRTC - 100% cualquier red (WiFi, datos móviles)
-// iceTransportPolicy: 'relay' = forzar TURN (evita NAT/firewall)
-const rtcConfig = {
-    iceTransportPolicy: 'relay',
-    iceCandidatePoolSize: 10,
-    iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'turns:freeturn.net:5349', username: 'free', credential: 'free' },
-        { urls: 'turn:freeturn.net:3478', username: 'free', credential: 'free' },
-        { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-        { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-        { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }
-    ]
-};
-
-// INICIALIZACIÓN
 function initializeElements() {
     elements = {
         volumeSlider: document.getElementById('volumeSlider'),
@@ -59,23 +33,20 @@ function initializeElements() {
         playBtn: document.getElementById('playBtn')
     };
     
-    // Crear elemento <audio> para reproducir el stream WebRTC
     state.audioElement = document.createElement('audio');
-    state.audioElement.autoplay = false; // NO autoplay - esperar interacción del usuario
+    state.audioElement.autoplay = false;
     state.audioElement.controls = false;
-    // CRÍTICO PARA MÓVILES: Atributos necesarios para Android/iOS
-    state.audioElement.playsInline = true; // Para iOS
-    state.audioElement.setAttribute('playsinline', 'true'); // Compatibilidad
-    state.audioElement.setAttribute('webkit-playsinline', 'true'); // iOS antiguo
-    state.audioElement.muted = true; // Inicialmente muted (requerido en móviles)
+    state.audioElement.playsInline = true;
+    state.audioElement.setAttribute('playsinline', 'true');
+    state.audioElement.setAttribute('webkit-playsinline', 'true');
+    state.audioElement.muted = true;
     state.audioElement.style.display = 'none';
     state.audioElement.volume = state.currentVolume;
     document.body.appendChild(state.audioElement);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🎙️ Radio Escolar FM - Panel de Oyentes');
-    
+    console.log('🎙️ Radio Escolar FM - Panel de Oyentes (audio via servidor)');
     initializeElements();
     setupListenerVisualizer();
     initializeSocket();
@@ -83,32 +54,18 @@ document.addEventListener('DOMContentLoaded', () => {
     setupPlayButton();
     loadListeners();
     
-    // Marcar interacción del usuario al hacer clic en cualquier parte (desktop)
     document.addEventListener('click', handleUserInteraction, { once: true });
-    
-    // También con cualquier tecla (desktop)
     document.addEventListener('keydown', handleUserInteraction, { once: true });
-    
-    // CRÍTICO PARA MÓVILES: Eventos touch (más confiables en Android/iOS)
     document.addEventListener('touchstart', handleUserInteraction, { once: true, passive: true });
     document.addEventListener('touchend', handleUserInteraction, { once: true, passive: true });
     
-    // Función para manejar la interacción del usuario
     function handleUserInteraction() {
         if (!state.userInteracted) {
             state.userInteracted = true;
-            console.log('✅ Usuario interactuó - AudioContext puede iniciarse');
-            
-            // Reanudar AudioContext si está suspendido
             if (state.audioContext && state.audioContext.state === 'suspended') {
-                state.audioContext.resume().then(() => {
-                    console.log('✅ AudioContext reanudado');
-                }).catch(err => {
-                    console.warn('⚠️ Error al reanudar AudioContext:', err);
-                });
+                state.audioContext.resume();
             }
-            
-            if (state.pendingStream) {
+            if (state.pendingStream || state.isReceiving) {
                 playPendingStream(true);
             }
         }
@@ -116,55 +73,38 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // =============================================
-// SOCKET.IO - TIEMPO REAL
+// SOCKET.IO - Audio via servidor
 // =============================================
 
 function initializeSocket() {
     try {
         state.socket = io(SOCKET_URL);
-
-        state.socket.on('connect', () => {
-            console.log('✅ Conectado al servidor');
-        });
-
+        state.socket.on('connect', () => console.log('✅ Conectado al servidor'));
         state.socket.on('listeners-update', (data) => {
-            if (elements.listenersCount) {
-                elements.listenersCount.textContent = data.count;
-            }
+            if (elements.listenersCount) elements.listenersCount.textContent = data.count;
         });
 
-        // WebRTC: Cuando hay un locutor disponible (nueva sesión)
         state.socket.on('broadcaster-ready', () => {
-            console.log('📡 Locutor disponible, esperando offer...');
-            // CRÍTICO: Siempre limpiar conexión anterior para recibir nuevo offer (varios oyentes / reconexión)
-            if (state.peerConnection) {
-                state.peerConnection.close();
-                state.peerConnection = null;
-                console.log('🔄 Conexión anterior cerrada para nueva sesión');
+            console.log('📡 Locutor disponible');
+            resetAudioSession();
+            setupMediaSource();
+        });
+
+        state.socket.on('audio-chunk', (data) => {
+            const chunk = toArrayBuffer(data);
+            if (!chunk || chunk.byteLength === 0) return;
+            state.isReceiving = true;
+            if (state.sourceBuffer) {
+                queueChunk(chunk);
+            } else {
+                state.chunkQueue.push(chunk);
             }
-            if (state.audioElement) state.audioElement.srcObject = null;
-            state.pendingStream = null;
+        });
+
+        state.socket.on('broadcaster-stop', () => {
+            console.log('📡 Locutor detenido');
+            state.isReceiving = false;
             hidePlayButton();
-        });
-
-        // WebRTC: Recibir offer del locutor
-        state.socket.on('webrtc-offer', async (data) => {
-            const { offer, from } = data;
-            console.log('📡 Recibido offer del locutor:', from);
-            await handleOffer(offer, from);
-        });
-
-        // WebRTC: Recibir ICE candidate del locutor
-        state.socket.on('webrtc-ice-candidate', async (data) => {
-            const { candidate, from } = data;
-            if (state.peerConnection) {
-                try {
-                    await state.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-                    console.log('✅ ICE candidate agregado');
-                } catch (error) {
-                    console.error('❌ Error al agregar ICE candidate:', error);
-                }
-            }
         });
 
     } catch (error) {
@@ -172,80 +112,91 @@ function initializeSocket() {
     }
 }
 
-// =============================================
-// WebRTC - MANEJAR OFFER Y CREAR ANSWER
-// =============================================
+function resetAudioSession() {
+    if (state.sourceBuffer && state.mediaSource?.readyState === 'open') {
+        try {
+            state.mediaSource.endOfStream();
+        } catch (e) {}
+    }
+    state.mediaSource = null;
+    state.sourceBuffer = null;
+    state.chunkQueue = [];
+    state.isAppending = false;
+    if (state.audioElement) {
+        state.audioElement.srcObject = null;
+        state.audioElement.removeAttribute('src');
+    }
+}
 
-async function handleOffer(offer, from) {
-    try {
-        // Crear RTCPeerConnection si no existe
-        if (!state.peerConnection) {
-            state.peerConnection = new RTCPeerConnection(rtcConfig);
-            
-            // Cuando recibimos el stream, asignarlo al elemento <audio>
-            state.peerConnection.ontrack = (event) => {
-                console.log('🎵 Stream recibido del locutor');
-                const stream = event.streams[0];
-                
-                if (!stream) {
-                    console.error('❌ Stream vacío recibido');
-                    return;
-                }
-                
-                if (state.audioElement) {
-                    state.audioElement.srcObject = stream;
-                    console.log('✅ Stream asignado:', { tracks: stream.getTracks().length });
-                    connectStreamToVisualizer(stream);
-                    // Intentar reproducción automática (play muted→unmute permite autoplay sin user gesture)
-                    playPendingStream();
-                }
-            };
-            
-            // Manejar ICE candidates
-            state.peerConnection.onicecandidate = (event) => {
-                if (event.candidate) {
-                    state.socket.emit('webrtc-ice-candidate', {
-                        candidate: event.candidate,
-                        to: from
-                    });
-                }
-            };
-            
-            // Manejar cambios de conexión
-            state.peerConnection.onconnectionstatechange = () => {
-                console.log('📡 Estado conexión:', state.peerConnection.connectionState);
-                if (state.peerConnection.connectionState === 'failed' || 
-                    state.peerConnection.connectionState === 'disconnected') {
-                    state.peerConnection.close();
-                    state.peerConnection = null;
-                    if (state.audioElement) {
-                        state.audioElement.srcObject = null;
-                    }
-                }
-            };
+function setupMediaSource() {
+    resetAudioSession();
+    const mimeType = MediaSource.isTypeSupported('audio/webm; codecs=opus') 
+        ? 'audio/webm; codecs=opus' : 'audio/webm';
+    
+    state.mediaSource = new MediaSource();
+    const url = URL.createObjectURL(state.mediaSource);
+    state.audioElement.src = url;
+    
+    state.mediaSource.addEventListener('sourceopen', () => {
+        try {
+            state.sourceBuffer = state.mediaSource.addSourceBuffer(mimeType);
+            state.sourceBuffer.mode = 'sequence';
+            state.sourceBuffer.addEventListener('updateend', () => {
+                state.isAppending = false;
+                processChunkQueue();
+                tryStartPlayback();
+            });
+            console.log('✅ MediaSource listo');
+            processChunkQueue();
+        } catch (e) {
+            console.error('❌ Error addSourceBuffer:', e);
         }
-        
-        // Configurar offer remoto
-        await state.peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-        
-        // Crear y enviar answer
-        const answer = await state.peerConnection.createAnswer();
-        await state.peerConnection.setLocalDescription(answer);
-        
-        state.socket.emit('webrtc-answer', {
-            answer: answer,
-            to: from
-        });
-        
-        console.log('✅ Answer creado y enviado');
-        
-    } catch (error) {
-        console.error('❌ Error al manejar offer:', error);
+    });
+}
+
+function toArrayBuffer(data) {
+    if (!data) return null;
+    if (data instanceof ArrayBuffer) return data;
+    if (data.buffer instanceof ArrayBuffer) return data.buffer;
+    if (data.data) return toArrayBuffer(data.data);
+    try { return new Uint8Array(data).buffer; } catch (_) { return null; }
+}
+
+function queueChunk(chunk) {
+    const buf = toArrayBuffer(chunk);
+    if (buf && buf.byteLength > 0) {
+        state.chunkQueue.push(buf);
+        processChunkQueue();
+    }
+}
+
+function processChunkQueue() {
+    if (state.isAppending || !state.sourceBuffer || state.chunkQueue.length === 0) return;
+    
+    state.isAppending = true;
+    const chunk = state.chunkQueue.shift();
+    
+    try {
+        state.sourceBuffer.appendBuffer(chunk);
+    } catch (e) {
+        console.warn('appendBuffer error:', e);
+        state.chunkQueue.unshift(chunk);
+        state.isAppending = false;
+    }
+}
+
+function tryStartPlayback() {
+    if (!state.audioElement || state.audioElement.readyState < 2) return;
+    if (state.pendingStream) return; // Ya manejado
+    state.pendingStream = true;
+    showPlayButton();
+    if (state.userInteracted) {
+        playPendingStream(true);
     }
 }
 
 // =============================================
-// FUNCIONES AUXILIARES PARA AUDIO
+// REPRODUCCIÓN Y BOTÓN ESCUCHAR
 // =============================================
 
 function showPlayButton() {
@@ -253,119 +204,71 @@ function showPlayButton() {
         elements.playBtn.classList.add('visible');
     }
 }
+
 function hidePlayButton() {
     if (elements.playBtn) {
         elements.playBtn.classList.remove('visible');
     }
+    state.pendingStream = false;
 }
 
-/**
- * @param {boolean} fromUserGesture - true si se llama desde click/touch del botón.
- *   iOS ignora unmute en .then() (fuera del gesto). Solo con user gesture: unmute+play síncronos.
- */
-function playPendingStream(fromUserGesture = false) {
-    if (!state.audioElement || !state.audioElement.srcObject) return;
-    
-    if (state.audioElement.volume === 0 && !state.isMuted) {
-        state.audioElement.volume = state.currentVolume;
-    }
+function playPendingStream(fromUserGesture) {
+    if (!state.audioElement || !state.isReceiving) return;
+    state.pendingStream = true;
     
     if (fromUserGesture) {
-        // TOCAR BOTÓN: unmute y play EN EL MISMO handler (iOS requiere esto)
         state.audioElement.muted = false;
-        state.audioElement.play().then(() => {
-            state.pendingStream = null;
-            hidePlayButton();
-        }).catch(err => {
-            console.error('❌ Error play (user gesture):', err);
-            showPlayButton();
-        });
+        state.audioElement.volume = state.currentVolume;
+        state.audioElement.play().catch(() => {});
     } else {
-        // AUTOMÁTICO: play muted (permitido), luego unmute en .then() (puede fallar en iOS)
         state.audioElement.muted = true;
         state.audioElement.play().then(() => {
-            state.audioElement.muted = false;
-            state.pendingStream = null;
-            hidePlayButton();
-        }).catch(() => {
-            if (state.audioElement.srcObject) {
-                state.pendingStream = state.audioElement.srcObject;
-                showPlayButton();
+            if (state.userInteracted) {
+                state.audioElement.muted = false;
+                state.audioElement.volume = state.currentVolume;
             }
-        });
+        }).catch(() => {});
     }
-}
-
-function connectStreamToVisualizer(stream) {
-    if (!state.audioContext || !state.analyser) {
-        // Crear AudioContext solo cuando sea necesario (no requiere interacción para visualización)
-        try {
-            state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            state.analyser = state.audioContext.createAnalyser();
-            state.analyser.fftSize = 128;
-            state.analyser.smoothingTimeConstant = 0.8;
-            drawVisualizer();
-        } catch (e) {
-            console.log("AudioContext no soportado:", e);
-            return;
-        }
-    }
-    
-    try {
-        const source = state.audioContext.createMediaStreamSource(stream);
-        source.connect(state.analyser);
-        // NO conectar a destination para evitar reproducción automática
-        // Solo visualización, no reproducción
-        console.log('✅ Stream conectado al visualizador');
-    } catch (e) {
-        console.warn('⚠️ No se pudo conectar al visualizador:', e);
-    }
+    hidePlayButton();
 }
 
 // =============================================
-// VISUALIZADOR PARA OYENTES
+// VISUALIZADOR
 // =============================================
 
 function setupListenerVisualizer() {
-    if (!elements.visualizer) return;
-
-    // NO crear AudioContext aquí - se creará cuando recibamos el stream
-    // Esto evita problemas con la política de autoplay
-    drawVisualizer();
-}
-
-function drawVisualizer() {
-    if (!elements.visualizer) return;
-
     const canvas = elements.visualizer;
-    const ctx = canvas.getContext('2d');
+    if (!canvas) return;
     
+    const ctx = canvas.getContext('2d');
     canvas.width = canvas.offsetWidth;
-    canvas.height = canvas.offsetHeight;
-
-    function renderFrame() {
-        requestAnimationFrame(renderFrame);
-
-        if (!state.analyser) {
-            // Si no hay analyser, dibujar canvas vacío
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            return;
-        }
-
-        const bufferLength = state.analyser.frequencyBinCount;
-        const dataArray = new Uint8Array(bufferLength);
+    
+    state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    state.analyser = state.audioContext.createAnalyser();
+    state.analyser.fftSize = 256;
+    state.analyser.smoothingTimeConstant = 0.8;
+    
+    const source = state.audioContext.createMediaElementSource(state.audioElement);
+    source.connect(state.analyser);
+    state.analyser.connect(state.audioContext.destination);
+    
+    const bufferLength = state.analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    let animationId;
+    
+    function draw() {
+        animationId = requestAnimationFrame(draw);
         state.analyser.getByteFrequencyData(dataArray);
-        
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        const barWidth = (canvas.width / bufferLength) * 2.5;
-        let barHeight;
+        const barWidth = (canvas.width / bufferLength) * 1.5;
         let x = 0;
-
+        let barHeight;
+        
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
         for (let i = 0; i < bufferLength; i++) {
             barHeight = (dataArray[i] / 255) * canvas.height;
             ctx.fillStyle = '#4a90e2';
-
             if (ctx.roundRect) {
                 ctx.beginPath();
                 ctx.roundRect(x, canvas.height - barHeight, barWidth - 2, barHeight, [2, 2, 0, 0]);
@@ -373,165 +276,12 @@ function drawVisualizer() {
             } else {
                 ctx.fillRect(x, canvas.height - barHeight, barWidth - 2, barHeight);
             }
-
             x += barWidth + 1;
         }
     }
-
-    renderFrame();
-}
-
-// =============================================
-// BOTÓN ESCUCHAR (móvil - play síncrono con user gesture)
-// =============================================
-function setupPlayButton() {
-    if (!elements.playBtn) return;
-    const handlePlay = () => {
-        state.userInteracted = true;
-        if (state.audioContext && state.audioContext.state === 'suspended') {
-            state.audioContext.resume();
-        }
-        playPendingStream(true); // true = desde user gesture (unmute+play síncronos para iOS)
-    };
-    elements.playBtn.addEventListener('click', handlePlay);
-    elements.playBtn.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        handlePlay();
-    }, { passive: false });
-}
-
-// =============================================
-// CONTROLES
-// =============================================
-
-function initializeControls() {
-    if (elements.volumeSlider) {
-        // CRÍTICO PARA MÓVILES: Agregar touchstart además de input
-        elements.volumeSlider.addEventListener('touchstart', (e) => {
-            if (!state.userInteracted) {
-                state.userInteracted = true;
-                // Reanudar AudioContext si está suspendido
-                if (state.audioContext && state.audioContext.state === 'suspended') {
-                    state.audioContext.resume();
-                }
-                // Intentar reproducir stream pendiente
-                if (state.pendingStream) {
-                    playPendingStream(true);
-                }
-            }
-        }, { passive: true });
-        
-        elements.volumeSlider.addEventListener('input', (e) => {
-            if (!state.userInteracted) {
-                state.userInteracted = true;
-                if (state.audioContext && state.audioContext.state === 'suspended') {
-                    state.audioContext.resume();
-                }
-                if (state.pendingStream) {
-                    playPendingStream(true);
-                }
-            }
-            handleVolumeChange(e);
-        });
-    }
-    if (elements.muteBtn) {
-        // CRÍTICO PARA MÓVILES: Agregar touchstart además de click
-        elements.muteBtn.addEventListener('touchstart', (e) => {
-            e.preventDefault();
-            if (!state.userInteracted) {
-                state.userInteracted = true;
-                if (state.audioContext && state.audioContext.state === 'suspended') {
-                    state.audioContext.resume();
-                }
-                if (state.pendingStream) {
-                    playPendingStream(true);
-                }
-            }
-            toggleMute();
-        }, { passive: false });
-        
-        elements.muteBtn.addEventListener('click', () => {
-            if (!state.userInteracted) {
-                state.userInteracted = true;
-                if (state.audioContext && state.audioContext.state === 'suspended') {
-                    state.audioContext.resume();
-                }
-                if (state.pendingStream) {
-                    playPendingStream(true);
-                }
-            }
-            toggleMute();
-        });
-    }
-}
-
-function handleVolumeChange(e) {
-    const volume = e.target.value / 100;
-    state.currentVolume = volume;
-    if (elements.volumeValue) {
-        elements.volumeValue.textContent = `${e.target.value}%`;
-    }
-    updateVolumeIcon(volume);
-
-    if (state.audioElement) {
-        state.audioElement.volume = volume;
-    }
-
-    if (volume > 0) {
-        state.isMuted = false;
-    }
-}
-
-function toggleMute() {
-    state.isMuted = !state.isMuted;
-
-    if (state.isMuted) {
-        if (state.audioElement) {
-            state.audioElement.volume = 0;
-            // CRÍTICO PARA MÓVILES: No mutear el elemento, solo volumen a 0
-            // (mutear puede causar problemas en algunos móviles)
-        }
-        if (elements.volumeSlider) {
-            elements.volumeSlider.value = 0;
-        }
-        if (elements.volumeValue) {
-            elements.volumeValue.textContent = '0%';
-        }
-    } else {
-        if (state.audioElement) {
-            state.audioElement.volume = state.currentVolume;
-            // Asegurar que no esté muted cuando se desmutea
-            if (state.audioElement.muted) {
-                state.audioElement.muted = false;
-            }
-        }
-        if (elements.volumeSlider) {
-            elements.volumeSlider.value = state.currentVolume * 100;
-        }
-        if (elements.volumeValue) {
-            elements.volumeValue.textContent = `${Math.round(state.currentVolume * 100)}%`;
-        }
-    }
-
-    updateVolumeIcon(state.isMuted ? 0 : state.currentVolume);
-}
-
-function updateVolumeIcon(volume) {
-    if (!elements.muteBtn) return;
-    const icon = elements.muteBtn.querySelector('i');
-    if (!icon) return;
     
-    icon.className = 'fas';
-
-    if (volume === 0) {
-        icon.classList.add('fa-volume-xmark');
-    } else if (volume < 0.3) {
-        icon.classList.add('fa-volume-off');
-    } else if (volume < 0.7) {
-        icon.classList.add('fa-volume-low');
-    } else {
-        icon.classList.add('fa-volume-high');
-    }
+    draw();
+    window.addEventListener('resize', () => { canvas.width = canvas.offsetWidth; });
 }
 
 // =============================================
@@ -549,5 +299,3 @@ async function loadListeners() {
         console.error('Error al cargar oyentes:', error);
     }
 }
-
-console.log(' Radio Escolar FM - Panel de Oyentes cargado');

@@ -1,6 +1,6 @@
 /**
  * RADIO ESCOLAR FM - Panel de Administrador
- * Solo para ADMIN - Con login y micrófono (WebRTC)
+ * Audio via servidor (Socket.io) - funciona en cualquier red
  */
 
 // CONFIGURACIÓN
@@ -16,30 +16,12 @@ let state = {
     currentVolume: 0.75,
     isMuted: false,
     socket: null,
-    // Audio para visualizador (micrófono)
     audioContext: null,
     analyser: null,
     microphoneSource: null,
-    // Micrófono y WebRTC
     mediaStream: null,
-    isRecording: false,
-    // WebRTC: un RTCPeerConnection por cada oyente
-    peerConnections: new Map() // socket.id -> RTCPeerConnection
-};
-
-// CONFIGURACIÓN WebRTC - 100% cualquier red (WiFi, datos móviles)
-// iceTransportPolicy: 'relay' = forzar TURN (evita NAT/firewall)
-const rtcConfig = {
-    iceTransportPolicy: 'relay',
-    iceCandidatePoolSize: 10,
-    iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'turns:freeturn.net:5349', username: 'free', credential: 'free' },
-        { urls: 'turn:freeturn.net:3478', username: 'free', credential: 'free' },
-        { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-        { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-        { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }
-    ]
+    mediaRecorder: null,
+    isRecording: false
 };
 
 // INICIALIZACIÓN
@@ -152,7 +134,7 @@ async function checkSavedSession() {
         if (response.ok) {
             hideLogin();
             showAdminPanel();
-            // CRÍTICO: Autenticar vía Socket para que broadcaster-ready y get-current-listeners funcionen
+            // CRÍTICO: Autenticar vía Socket para que broadcaster-ready y audio-chunk funcionen
             if (state.socket && state.socket.connected) {
                 state.socket.emit('admin-auth', {
                     username: 'ADMINISTRADOR',
@@ -221,69 +203,6 @@ function initializeSocket() {
         state.socket.on('listeners-update', (data) => {
             if (elements.listenersCount) {
                 elements.listenersCount.textContent = data.count;
-            }
-        });
-
-        // WebRTC: Cuando un nuevo oyente se conecta, crear conexión
-        state.socket.on('new-listener', (listenerId) => {
-            console.log('👂 Nuevo oyente conectado:', listenerId);
-            // CRÍTICO: Verificar que no existe ya la conexión y que tenemos mediaStream
-            if (state.isRecording && state.mediaStream && !state.peerConnections.has(listenerId)) {
-                console.log('🔗 Creando conexión con nuevo oyente:', listenerId);
-                createPeerConnection(listenerId);
-            } else {
-                console.warn('⚠️ No se puede crear conexión:', {
-                    isRecording: state.isRecording,
-                    hasMediaStream: !!state.mediaStream,
-                    alreadyExists: state.peerConnections.has(listenerId)
-                });
-            }
-        });
-
-        // WebRTC: Recibir lista de oyentes actuales
-        state.socket.on('current-listeners', (listenerIds) => {
-            console.log('👂 Oyentes actuales recibidos:', listenerIds);
-            if (state.isRecording && state.mediaStream && Array.isArray(listenerIds)) {
-                listenerIds.forEach(listenerId => {
-                    if (listenerId !== state.socket.id && !state.peerConnections.has(listenerId)) {
-                        console.log('🔗 Creando conexión con oyente existente:', listenerId);
-                        createPeerConnection(listenerId);
-                    }
-                });
-            } else {
-                console.warn('⚠️ No se puede procesar lista de oyentes:', {
-                    isRecording: state.isRecording,
-                    hasMediaStream: !!state.mediaStream,
-                    isArray: Array.isArray(listenerIds)
-                });
-            }
-        });
-
-        // WebRTC: Recibir answer del oyente
-        state.socket.on('webrtc-answer', async (data) => {
-            const { answer, from } = data;
-            const pc = state.peerConnections.get(from);
-            if (pc) {
-                try {
-                    await pc.setRemoteDescription(new RTCSessionDescription(answer));
-                    console.log('✅ Answer recibido y configurado');
-                } catch (error) {
-                    console.error('❌ Error al configurar answer:', error);
-                }
-            }
-        });
-
-        // WebRTC: Recibir ICE candidate del oyente
-        state.socket.on('webrtc-ice-candidate', async (data) => {
-            const { candidate, from } = data;
-            const pc = state.peerConnections.get(from);
-            if (pc) {
-                try {
-                    await pc.addIceCandidate(new RTCIceCandidate(candidate));
-                    console.log('✅ ICE candidate agregado');
-                } catch (error) {
-                    console.error('❌ Error al agregar ICE candidate:', error);
-                }
             }
         });
 
@@ -415,152 +334,70 @@ function updateVolumeIcon(volume) {
 }
 
 // =============================================
-// WebRTC - CREAR CONEXIÓN CON OYENTE
-// =============================================
-
-async function createPeerConnection(listenerId) {
-    // Evitar crear conexión duplicada
-    if (state.peerConnections.has(listenerId)) {
-        console.log('⚠️ Ya existe conexión con oyente:', listenerId);
-        return;
-    }
-    
-    try {
-        const pc = new RTCPeerConnection(rtcConfig);
-        
-        // Agregar tracks del micrófono a la conexión
-        if (state.mediaStream) {
-            state.mediaStream.getTracks().forEach(track => {
-                pc.addTrack(track, state.mediaStream);
-                console.log('✅ Track agregado a RTCPeerConnection:', track.kind);
-            });
-        } else {
-            console.error('❌ No hay mediaStream disponible para crear conexión');
-            return;
-        }
-        
-        // Manejar ICE candidates
-        pc.onicecandidate = (event) => {
-            if (event.candidate) {
-                state.socket.emit('webrtc-ice-candidate', {
-                    candidate: event.candidate,
-                    to: listenerId
-                });
-            }
-        };
-        
-        // Manejar cambios de conexión
-        pc.onconnectionstatechange = () => {
-            console.log(`📡 Estado conexión con ${listenerId}:`, pc.connectionState);
-            if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-                pc.close();
-                state.peerConnections.delete(listenerId);
-            }
-        };
-        
-        // Crear y enviar offer
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        
-        state.socket.emit('webrtc-offer', {
-            offer: offer,
-            to: listenerId
-        });
-        
-        state.peerConnections.set(listenerId, pc);
-        console.log('✅ RTCPeerConnection creada para oyente:', listenerId);
-        
-    } catch (error) {
-        console.error('❌ Error al crear RTCPeerConnection:', error);
-    }
-}
-
-// =============================================
-// MICRÓFONO Y WebRTC
+// MICRÓFONO - Audio via servidor (MediaRecorder + Socket.io)
 // =============================================
 
 async function startRecording() {
     if (!state.isAdmin || state.isRecording) return;
 
     try {
-        // Capturar micrófono
         state.mediaStream = await navigator.mediaDevices.getUserMedia({ 
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true
-            } 
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
         });
 
-        console.log('🎤 Micrófono capturado');
-
-        // Configurar visualizador
-        if (!state.audioContext) {
-            setupVisualizer();
-        }
-
+        if (!state.audioContext) setupVisualizer();
         if (state.audioContext && !state.microphoneSource) {
             state.microphoneSource = state.audioContext.createMediaStreamSource(state.mediaStream);
             state.microphoneSource.connect(state.analyser);
         }
 
-        // Notificar al servidor que estamos listos
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+            ? 'audio/webm;codecs=opus' : 'audio/webm';
+        state.mediaRecorder = new MediaRecorder(state.mediaStream, {
+            mimeType,
+            audioBitsPerSecond: 32000
+        });
+
+        state.mediaRecorder.ondataavailable = (e) => {
+            if (e.data.size > 0 && state.socket?.connected) {
+                state.socket.emit('audio-chunk', e.data);
+            }
+        };
+
+        state.mediaRecorder.start(100);
         state.socket.emit('broadcaster-ready');
-        
-        // CRÍTICO: Solicitar lista varias veces (timing para varios oyentes)
-        state.socket.emit('get-current-listeners');
-        setTimeout(() => state.socket.emit('get-current-listeners'), 150);
-        setTimeout(() => state.socket.emit('get-current-listeners'), 400);
-        
         state.isRecording = true;
-
-        if (elements.micBtn) {
-            elements.micBtn.classList.add('active');
-        }
-
-        console.log('🎤 Transmisión iniciada');
+        if (elements.micBtn) elements.micBtn.classList.add('active');
+        console.log('🎤 Transmisión via servidor iniciada');
 
     } catch (error) {
         console.warn('⚠️ Error al acceder al micrófono:', error.message);
         state.isRecording = false;
-        if (elements.micBtn) {
-            elements.micBtn.classList.remove('active');
-        }
+        if (elements.micBtn) elements.micBtn.classList.remove('active');
     }
 }
 
 function stopRecording() {
     if (!state.isRecording) return;
-
     try {
-        // Cerrar todas las conexiones WebRTC
-        state.peerConnections.forEach((pc, listenerId) => {
-            pc.close();
-            console.log('🔌 Conexión cerrada con oyente:', listenerId);
-        });
-        state.peerConnections.clear();
-
-        // Detener tracks del micrófono
+        if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
+            state.mediaRecorder.stop();
+            state.mediaRecorder = null;
+        }
         if (state.mediaStream) {
             state.mediaStream.getTracks().forEach(track => track.stop());
             state.mediaStream = null;
         }
-
         if (state.microphoneSource) {
             state.microphoneSource.disconnect();
             state.microphoneSource = null;
         }
-
+        state.socket?.emit('broadcaster-stop');
         state.isRecording = false;
-
-        if (elements.micBtn) {
-            elements.micBtn.classList.remove('active');
-        }
-
+        if (elements.micBtn) elements.micBtn.classList.remove('active');
         console.log('🎤 Transmisión detenida');
-
     } catch (error) {
-        console.warn('⚠️ Error al detener la transmisión:', error);
+        console.warn('⚠️ Error al detener:', error);
     }
 }
 

@@ -10,3 +10,7 @@ npm-debug.log
 
 # Windows
 Thumbs.db
+
+# Backups y temporales
+*.backup
+temp_*.js

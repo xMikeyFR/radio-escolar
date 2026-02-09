@@ -140,75 +140,29 @@ io.on('connection', (socket) => {
     });
 
     // ===================================
-    // WebRTC SIGNALING
+    // AUDIO VÍA SERVIDOR (sin WebRTC/TURN)
+    // Admin envía chunks → servidor → oyentes (funciona en cualquier red)
     // ===================================
     
-    // Cuando el locutor está listo para transmitir
     socket.on('broadcaster-ready', () => {
         if (adminSessions.has(socket.id)) {
             broadcasterId = socket.id;
-            console.log(`🎤 Locutor listo para transmitir: ${socket.id}`);
-            // Notificar a todos los oyentes actuales que hay un locutor
+            console.log(`🎤 Locutor listo (audio via servidor): ${socket.id}`);
             socket.broadcast.emit('broadcaster-ready');
         }
     });
-    
-    // CRÍTICO: Cuando un nuevo oyente se conecta y hay un locutor activo, notificar al locutor
-    // Esto se ejecuta después de que el socket se conecta
-    // Usar múltiples timeouts para asegurar que el mensaje llegue
-    setTimeout(() => {
-        if (broadcasterId && !adminSessions.has(socket.id)) {
-            io.to(broadcasterId).emit('new-listener', socket.id);
-            console.log(`👂 Notificando locutor sobre nuevo oyente: ${socket.id}`);
-        }
-    }, 50);
-    
-    // Segundo intento por si el primero falla
-    setTimeout(() => {
-        if (broadcasterId && !adminSessions.has(socket.id)) {
-            io.to(broadcasterId).emit('new-listener', socket.id);
-            console.log(`👂 Re-notificando locutor sobre nuevo oyente: ${socket.id}`);
-        }
-    }, 300);
-    
-    // Enviar lista de oyentes actuales cuando el locutor lo solicita
-    socket.on('get-current-listeners', () => {
-        if (adminSessions.has(socket.id)) {
-            const currentListeners = Array.from(listeners).filter(id => id !== socket.id);
-            socket.emit('current-listeners', currentListeners);
-            console.log(`📋 Enviando lista de ${currentListeners.length} oyentes al locutor`);
+
+    socket.on('audio-chunk', (data) => {
+        if (adminSessions.has(socket.id) && data) {
+            socket.broadcast.emit('audio-chunk', data);
         }
     });
-    
-    // Reenviar offer del locutor al oyente específico
-    socket.on('webrtc-offer', (data) => {
-        const { offer, to } = data;
-        if (adminSessions.has(socket.id)) {
-            io.to(to).emit('webrtc-offer', {
-                offer: offer,
-                from: socket.id
-            });
-            console.log(`📤 Offer enviado de ${socket.id} a ${to}`);
+
+    socket.on('broadcaster-stop', () => {
+        if (adminSessions.has(socket.id) && broadcasterId === socket.id) {
+            broadcasterId = null;
+            socket.broadcast.emit('broadcaster-stop');
         }
-    });
-    
-    // Reenviar answer del oyente al locutor
-    socket.on('webrtc-answer', (data) => {
-        const { answer, to } = data;
-        io.to(to).emit('webrtc-answer', {
-            answer: answer,
-            from: socket.id
-        });
-        console.log(`📤 Answer enviado de ${socket.id} a ${to}`);
-    });
-    
-    // Reenviar ICE candidates
-    socket.on('webrtc-ice-candidate', (data) => {
-        const { candidate, to } = data;
-        io.to(to).emit('webrtc-ice-candidate', {
-            candidate: candidate,
-            from: socket.id
-        });
     });
 
     // Cuando el oyente se desconecta

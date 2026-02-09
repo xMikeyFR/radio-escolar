@@ -1,0 +1,9 @@
+# Configuración para Render.com
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: radio-escolar
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
